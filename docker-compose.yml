@@ -1,0 +1,51 @@
+version: '3'
+
+services:
+  # 1. MINIO (Tu S3 Local)
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    command: server /data --console-address ":9001"
+
+  # 2. POSTGRES (Base de datos para metadatos, mucho más estable que MariaDB para esto)
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: metastore
+    ports:
+      - "5432:5432"
+
+  # 3. HIVE METASTORE (El índice)
+  hive-metastore:
+    image: apache/hive:4.0.0-beta-1
+    container_name: hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+    # Este comando espera a que postgres arranque y luego inicializa el esquema
+    command: /bin/sh -c "/opt/hive/bin/schematool -dbType postgres -initOrUpgradeSchema && /opt/hive/bin/hive --service metastore"
+    depends_on:
+      - postgres
+    ports:
+      - "9083:9083"
+
+  # 4. TRINO (El motor de consultas)
+  trino:
+    image: trinodb/trino:latest
+    container_name: trino
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./catalog:/etc/trino/catalog
+    depends_on:
+      - hive-metastore
+      - minio
