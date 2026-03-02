@@ -1,0 +1,5 @@
+# 1. Partimos exactamente de la imagen de Tabular que estás usando
+FROM tabulario/spark-iceberg:latest
+
+# 2. Instalamos las dependencias para el TFG (Tabular ya incluye pip)
+RUN pip install kafka-python basketball-reference-web-scraper trino nba_api

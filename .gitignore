@@ -1,0 +1,6 @@
+.env
+DataLake-SegundUM/
+notebooks/
+infrastructure/metabase-data/
+data/
+logs/

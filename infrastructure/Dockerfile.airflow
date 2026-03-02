@@ -1,0 +1,16 @@
+FROM apache/airflow:2.8.1
+
+# 1. Cambiamos al usuario root para instalar paquetes del sistema operativo
+USER root
+RUN apt-get update && \
+    apt-get install -y default-jre-headless && \
+    apt-get clean
+
+# 2. Establecemos la variable de entorno de Java
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+
+# 3. Volvemos al usuario airflow por seguridad
+USER airflow
+
+# 4. Instalamos el proveedor oficial de Spark para Airflow y PySpark
+RUN pip install --no-cache-dir apache-airflow-providers-apache-spark pyspark==3.5.0 apache-airflow-providers-trino trino
