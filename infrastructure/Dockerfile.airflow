@@ -13,4 +13,4 @@ ENV JAVA_HOME=/usr/lib/jvm/default-java
 USER airflow
 
 # 4. Instalamos el proveedor oficial de Spark para Airflow y PySpark
-RUN pip install --no-cache-dir apache-airflow-providers-apache-spark pyspark==3.5.0 apache-airflow-providers-trino trino
+RUN pip install --no-cache-dir kafka-python pandas basketball-reference-web-scraper apache-airflow-providers-apache-spark pyspark==3.5.0 apache-airflow-providers-trino trino

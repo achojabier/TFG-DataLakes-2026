@@ -51,6 +51,10 @@ services:
     ports: ["8181:8181"]
     depends_on: [minio]
     environment:
+      CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
+      CATALOG_URI: jdbc:postgresql://postgres:5432/airflow
+      CATALOG_JDBC_USER: airflow
+      CATALOG_JDBC_PASSWORD: airflow
       CATALOG_WAREHOUSE: ${CATALOG_WAREHOUSE}
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
@@ -194,6 +198,35 @@ services:
       - ./infrastructure/metabase-data:/metabase-data
     depends_on:
       - trino
+  spark-consumer:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.spark
+    container_name: spark-consumer
+    depends_on:
+      - kafka
+      - trino
+    volumes:
+      - ./jobs:/home/iceberg/jobs
+      - ./warehouse:/home/iceberg/warehouse
+      - ./infrastructure/trino/catalog:/home/iceberg/warehouse/catalog
+    environment:
+      - SPARK_HOME=/opt/spark
+      - PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-0.10.9.7-src.zip
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${MINIO_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
+      - HADOOP_OPT_AWS_ACCESS_KEY_ID=admin
+      - HADOOP_OPT_AWS_SECRET_ACCESS_KEY=admin123
+      - MINIO_USER=${MINIO_USER}
+      - MINIO_PASSWORD=${MINIO_PASSWORD}
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "echo '⏳ Esperando 15 segundos a que Kafka y Trino respiren...' && 
+      sleep 15 && 
+      echo '🚀 Lanzando Consumidor Automático...' && 
+      /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 /home/iceberg/jobs/consumidor_player.py"
+    restart: unless-stopped
 volumes:
   minio_data:
   postgres_data:
