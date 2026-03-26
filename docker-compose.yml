@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   spark-init:
     image: tabulario/spark-iceberg:latest
@@ -16,6 +14,7 @@ services:
       - minio
     entrypoint: /bin/bash
     command: /home/iceberg/notebooks/start.sh
+
   minio:
     image: minio/minio
     container_name: minio
@@ -94,6 +93,7 @@ services:
     links:                                    
       - iceberg-rest:rest
       - minio
+
   postgres:
     image: postgres:13
     container_name: postgres
@@ -105,6 +105,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
   airflow-init:
     build: 
       context: .
@@ -124,6 +125,7 @@ services:
     command: -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
     volumes:
       - ./dags:/opt/airflow/dags
+
   airflow-webserver:
     build: 
       context: .
@@ -147,6 +149,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
     command: webserver
+
   airflow-scheduler:
     build: 
       context: .
@@ -170,6 +173,7 @@ services:
       - ./notebooks:/home/iceberg/notebooks
       - ./logs:/opt/airflow/logs
     command: scheduler
+
   kafka:
     image: bitnamilegacy/kafka:latest
     container_name: kafka
@@ -187,6 +191,7 @@ services:
       - ALLOW_PLAINTEXT_LISTENER=yes
     volumes:
       - kafka_data:/bitnami/kafka
+
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
@@ -198,6 +203,7 @@ services:
       - ./infrastructure/metabase-data:/metabase-data
     depends_on:
       - trino
+
   spark-consumer:
     build:
       context: .
@@ -222,11 +228,12 @@ services:
       - MINIO_PASSWORD=${MINIO_PASSWORD}
     entrypoint: ["/bin/bash", "-c"]
     command: >
-      "echo '⏳ Esperando 15 segundos a que Kafka y Trino respiren...' && 
+      "echo 'Esperando 15 segundos a que Kafka y Trino respiren...' && 
       sleep 15 && 
-      echo '🚀 Lanzando Consumidor Automático...' && 
+      echo 'Lanzando Consumidor Automático...' && 
       /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 /home/iceberg/jobs/consumidor_player.py"
     restart: unless-stopped
+
 volumes:
   minio_data:
   postgres_data:
