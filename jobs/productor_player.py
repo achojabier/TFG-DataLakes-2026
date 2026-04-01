@@ -6,13 +6,13 @@ from datetime import datetime
 from kafka import KafkaProducer
 
 def obtener_ultima_fecha_iceberg():
-    print("🔍 Consultando a Trino/Iceberg el último partido guardado...")
+    print("Consultando a Trino/Iceberg el último partido guardado...")
     try:
         
         conn = connect(host="trino", port=8080, user="admin")
         cur = conn.cursor()
         
-        # Buscamos la fecha máxima
+        
         cur.execute("SELECT MAX(gameDateTimeEst) FROM iceberg.nba.players_eoinamoore")
         res = cur.fetchone()
         
@@ -22,22 +22,22 @@ def obtener_ultima_fecha_iceberg():
             return ultima_fecha
             
     except Exception as e:
-        print(f"⚠️ Aviso: No se pudo consultar la tabla (quizás aún no existe o está vacía).")
+        print(f"Aviso: No se pudo consultar la tabla (quizás aún no existe o está vacía).")
         print(f"Detalle del error: {e}")
         fecha_default = '2025-10-20 00:00:00'
-        print(f"➡️ Usando fecha por defecto: {fecha_default} (se cargarán todos los partidos)")
+        print(f"Usando fecha por defecto: {fecha_default} (se cargarán todos los partidos)")
     return fecha_default
 
 def simulador_partido_vivo():
-    print("🏀 Iniciando ingesta de box scores NBA")
+    print("Iniciando ingesta de box scores NBA")
 
     productor = KafkaProducer(
         bootstrap_servers=['kafka:9092'],
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
-    # Obtener la última fecha de partido almacenada en Iceberg para no reingestar datos antiguos
+    # Obtener la última fecha de partido almacenada en Iceberg para no reingestar datos antiguos (duplicados)
     fecha = obtener_ultima_fecha_iceberg()
-    print("📁 Cargando datos...")
+    print("Cargando datos...")
     df = pd.read_csv('/opt/airflow/jobs/PlayerStatistics.csv')
 
     df['fecha_real'] = pd.to_datetime(df['gameDateTimeEst'])
@@ -46,7 +46,7 @@ def simulador_partido_vivo():
     df_filtrado = df_filtrado.sort_values('fecha_real', ascending=True)
     df_filtrado = df_filtrado.fillna(0)
 
-    print("🚀 Iniciando transmisión de box scores...\n")
+    print("Iniciando transmisión de box scores...\n")
 
     for indice, fila in df_filtrado.iterrows():
         box_score = fila.to_dict()

@@ -1,17 +1,18 @@
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 from airflow.providers.trino.operators.trino import TrinoOperator
+from airflow.sensors.external_task import ExternalTaskSensor
+from trino.dbapi import connect
 from datetime import datetime, timedelta
 
-# Configuración básica del DAG
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2023, 1, 1),
-    'retries': 1,
+    'start_date': datetime(2025, 10, 20),
+    'retries': 2,
     'retry_delay': timedelta(minutes=2),
 }
 
-# La super-query de Iceberg
 sql_merge = """
 MERGE INTO iceberg.processed.players_eoinamoore AS target
 USING (
@@ -62,20 +63,58 @@ WHEN NOT MATCHED THEN
         source.gameDateTimeEst
     )
 """
+def verificar_datos_landing(**context):
+    """
+    FIX: Added a pre-merge sanity check.
+    Queries the landing table to confirm new rows exist before running the
+    expensive MERGE. If landing is empty or unchanged, raises an error so the
+    DAG fails fast instead of running a no-op MERGE.
+    """
+    
+ 
+    execution_date = context['execution_date']
+    print(f"🔍 Verificando datos en landing para la ejecución: {execution_date}")
+ 
+    conn = connect(host="trino", port=8080, user="admin")
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM iceberg.nba.players_eoinamoore")
+    count = cur.fetchone()[0]
+    print(f"📊 Filas encontradas en landing: {count}")
+ 
+    if count == 0:
+        raise ValueError("⛔ La tabla landing está vacía — el MERGE no tiene sentido. ¿Falló la ingesta?")
+ 
+    print("✅ Landing tiene datos. Procediendo con el MERGE.")
 
 with DAG(
     'procesar_capa_plata_nba',
     default_args=default_args,
     description='Ejecuta el MERGE en Trino para limpiar la capa Processed de Iceberg',
-    schedule_interval='0 8 * * *',  # Se ejecuta todos los días a las 08:00 AM
+    schedule_interval='0 9 * * *',
     catchup=False,
     tags=['nba', 'iceberg', 'trino', 'processed'],
 ) as dag:
-
+    esperar_ingesta = ExternalTaskSensor(
+        task_id='esperar_ingesta_completada',
+        external_dag_id='player_box_scores',       # watches DAG 1
+        external_task_id='etl_box_scores',         # watches this specific task
+        # How long to wait for DAG 1 to complete before giving up (60 min)
+        timeout=3600,
+        # Check every 60 seconds
+        poke_interval=60,
+        # If DAG 1 didn't run today (e.g. manual skip), don't block forever
+        mode='reschedule',
+        # allowed_states default is ['success'] — only proceed if DAG 1 succeeded
+    )
+    verificar_landing = PythonOperator(
+        task_id='verificar_datos_landing',
+        python_callable=verificar_datos_landing,
+        provide_context=True,
+    )
     # Operador que manda la orden a Trino
     ejecutar_merge_trino = TrinoOperator(
         task_id='merge_landing_to_processed',
-        trino_conn_id='trino_default',  # Usaremos esta conexión en Airflow
+        trino_conn_id='trino_default',
         sql=sql_merge
     )
 

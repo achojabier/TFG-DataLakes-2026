@@ -1,0 +1,55 @@
+engine,format,query_id,category,description,runs,avg_ms,min_ms,max_ms,stddev_ms,row_count,error
+Trino,Iceberg,Q1_count,Scan,Full table scan — COUNT(*) on box scores,3,115.07,98.77,144.26,25.34,1,
+Trino,Iceberg,Q2_filter,Filter,Selective filter — players with 30+ points,3,111.31,102.06,120.58,9.26,832,
+Trino,Iceberg,Q3_aggregation,Aggregation,GROUP BY aggregation — avg points per team,3,271.81,147.66,484.81,185.31,41,
+Trino,Iceberg,Q4_window,Window,Window function — running avg points per player,3,281.77,164.05,457.07,154.76,1000,
+Trino,Iceberg,Q5_join_schedule,Join,JOIN — box scores joined with schedule,3,221.0,160.43,285.04,62.38,500,
+Trino,Iceberg,Q6_join_advanced,Join,JOIN — box scores joined with advanced stats,3,213.2,183.72,251.4,34.67,1000,
+Trino,Iceberg,Q7_multi_agg,Aggregation,Multi-column aggregation — shooting efficiency per team,3,211.67,178.74,258.88,41.93,41,
+Trino,Iceberg,Q8_rank,Window,RANK window — top scorer per team,3,160.89,143.53,179.01,17.75,41,
+Trino,Iceberg,Q9_advanced_filter,Filter,Advanced stats filter — high efficiency players,3,86.22,74.17,104.73,16.27,100,
+Trino,Iceberg,Q10_three_way_join,Join,Three-table join — box scores + advanced + schedule,3,243.7,195.56,272.08,41.91,200,
+Spark SQL,Iceberg,Q1_count,Scan,Full table scan — COUNT(*) on box scores,3,1892.52,234.57,5135.9,2809.09,1,
+Spark SQL,Iceberg,Q2_filter,Filter,Selective filter — players with 30+ points,3,440.84,241.27,637.4,198.08,832,
+Spark SQL,Iceberg,Q3_aggregation,Aggregation,GROUP BY aggregation — avg points per team,3,386.19,249.99,635.58,216.28,41,
+Spark SQL,Iceberg,Q4_window,Window,Window function — running avg points per player,3,261.6,186.35,357.7,87.56,1000,
+Spark SQL,Iceberg,Q5_join_schedule,Join,JOIN — box scores joined with schedule,3,421.83,284.19,658.66,206.0,500,
+Spark SQL,Iceberg,Q6_join_advanced,Join,JOIN — box scores joined with advanced stats,3,,,,0,0,"
+[DATATYPE_MISSING_SIZE] DataType ""VARCHAR"" requires a length parameter, for example ""VARCHAR""(10). Please specify the length.(line 7, pos 45)
+
+== SQL ==
+
+            SELECT p.firstname, p.lastname, p.points,
+                   a.tspct, a.pie, a.netrating, a.usgpct
+            FROM iceberg.processed.players_eoinamoore p
+            JOIN iceberg.processed.dim_advanced_stats a
+              ON CAST(p.personid AS INTEGER) = a.personid
+             AND p.gameid = CAST(a.gameid AS VARCHAR)
+---------------------------------------------^^^
+            LIMIT 1000
+        
+"
+Spark SQL,Iceberg,Q7_multi_agg,Aggregation,Multi-column aggregation — shooting efficiency per team,3,276.69,217.97,386.95,95.56,41,
+Spark SQL,Iceberg,Q8_rank,Window,RANK window — top scorer per team,3,499.36,261.69,851.02,310.76,41,
+Spark SQL,Iceberg,Q9_advanced_filter,Filter,Advanced stats filter — high efficiency players,3,193.95,163.43,252.4,50.64,100,
+Spark SQL,Iceberg,Q10_three_way_join,Join,Three-table join — box scores + advanced + schedule,3,,,,0,0,"
+[DATATYPE_MISSING_SIZE] DataType ""VARCHAR"" requires a length parameter, for example ""VARCHAR""(10). Please specify the length.(line 9, pos 45)
+
+== SQL ==
+
+            SELECT p.firstname, p.lastname,
+                   p.points, p.assists,
+                   a.tspct, a.pie,
+                   s.arenaname, s.arenacity
+            FROM iceberg.processed.players_eoinamoore p
+            JOIN iceberg.processed.dim_advanced_stats a
+              ON CAST(p.personid AS INTEGER) = a.personid
+             AND p.gameid = CAST(a.gameid AS VARCHAR)
+---------------------------------------------^^^
+            JOIN iceberg.processed.dim_schedule s
+              ON CAST(p.gameid AS INTEGER) = s.gameid
+            WHERE p.points >= 25
+            ORDER BY p.points DESC
+            LIMIT 200
+        
+"

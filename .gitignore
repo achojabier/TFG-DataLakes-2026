@@ -4,3 +4,7 @@ notebooks/
 infrastructure/metabase-data/
 data/
 logs/
+jobs/Player_Salaries_2025_26.csv
+jobs/hoopshype_nba_salaries.csv
+jobs/LeagueSchedule25_26.csv
+jobs/PlayerStatisticsAdvanced.csv
