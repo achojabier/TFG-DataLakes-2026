@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 
 default_args = {
@@ -23,5 +24,10 @@ with DAG(
         bash_command='python /opt/airflow/jobs/productor_player.py',
         execution_timeout=timedelta(minutes=30)
     )
+    disparar_plata = TriggerDagRunOperator(
+        task_id='trigger_capa_plata',
+        trigger_dag_id='procesar_capa_plata_nba', # Llama a tu DAG de Plata
+        wait_for_completion=False
+    )
 
-    tarea_productor
+    tarea_productor >> disparar_plata

@@ -241,11 +241,6 @@ services:
       sleep 15 && 
       echo 'Lanzando Consumidor Automático...' && 
       /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 /home/iceberg/jobs/consumidor_player.py"
-<<<<<<< HEAD
-=======
-    restart: unless-stopped
-
->>>>>>> 2999ef20c7fe1ce6217cc9a16275e68fe5f1dea9
 volumes:
   minio_data:
   postgres_data:

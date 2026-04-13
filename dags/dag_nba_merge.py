@@ -4,6 +4,7 @@ from airflow.providers.trino.operators.trino import TrinoOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from trino.dbapi import connect
 from datetime import datetime, timedelta
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 default_args = {
     'owner': 'airflow',
@@ -90,22 +91,10 @@ with DAG(
     'procesar_capa_plata_nba',
     default_args=default_args,
     description='Ejecuta el MERGE en Trino para limpiar la capa Processed de Iceberg',
-    schedule_interval='0 9 * * *',
+    schedule_interval=None,
     catchup=False,
     tags=['nba', 'iceberg', 'trino', 'processed'],
 ) as dag:
-    esperar_ingesta = ExternalTaskSensor(
-        task_id='esperar_ingesta_completada',
-        external_dag_id='player_box_scores',       # watches DAG 1
-        external_task_id='etl_box_scores',         # watches this specific task
-        # How long to wait for DAG 1 to complete before giving up (60 min)
-        timeout=3600,
-        # Check every 60 seconds
-        poke_interval=60,
-        # If DAG 1 didn't run today (e.g. manual skip), don't block forever
-        mode='reschedule',
-        # allowed_states default is ['success'] — only proceed if DAG 1 succeeded
-    )
     verificar_landing = PythonOperator(
         task_id='verificar_datos_landing',
         python_callable=verificar_datos_landing,
@@ -118,4 +107,10 @@ with DAG(
         sql=sql_merge
     )
 
-    ejecutar_merge_trino
+    disparar_oro = TriggerDagRunOperator(
+    task_id='trigger_capa_oro',
+    trigger_dag_id='dag_nba_oro', # El nombre exacto de tu otro DAG
+    wait_for_completion=False
+    )
+
+    verificar_landing >> ejecutar_merge_trino >> disparar_oro
