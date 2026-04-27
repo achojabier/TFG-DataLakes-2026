@@ -213,7 +213,7 @@ first_snap = trino_execute(conn, """
     LIMIT 1
 """)[0]
 
-snapshot_id = 2309484074392766127
+snapshot_id = first_snap[0]
 print(f"Querying snapshot: {snapshot_id}")
 print(f"Timestamp        : 2026-03-20 18:18 (original ingestion, no personId)")
 

@@ -24,10 +24,17 @@ with DAG(
         bash_command='python /opt/airflow/jobs/productor_player.py',
         execution_timeout=timedelta(minutes=30)
     )
+
+    tarea_salarios = BashOperator(
+        task_id='ingesta_salarios_raw',
+        bash_command='python /opt/airflow/jobs/ingesta_salaries.py',
+        execution_timeout=timedelta(minutes=15)
+    )
+
     disparar_plata = TriggerDagRunOperator(
         task_id='trigger_capa_plata',
         trigger_dag_id='procesar_capa_plata_nba', # Llama a tu DAG de Plata
         wait_for_completion=False
     )
 
-    tarea_productor >> disparar_plata
+    [tarea_productor, tarea_salarios] >> disparar_plata

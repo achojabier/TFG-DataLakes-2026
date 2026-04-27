@@ -9,7 +9,11 @@ default_args = {
 }
 
 sql_game_logs = """
-CREATE OR REPLACE TABLE iceberg.gold.game_logs WITH (format = 'PARQUET') AS
+CREATE OR REPLACE TABLE iceberg.warehouse.game_logs WITH (
+    format = 'PARQUET',
+    sorted_by = ARRAY['playerteamName', 'personId'],
+    identifier_fields = ARRAY['gameId', 'personId']
+) AS
 WITH player_games AS (
     SELECT 
         personId,
@@ -18,11 +22,15 @@ WITH player_games AS (
         playerteamName,
         points,
         assists,
+        reboundsOffensive,
+        reboundsDefensive,
+        steals,
+        blocks,
+        turnovers,
         numMinutes,
-        CAST(SUBSTR(gameDateTimeEst, 1, 10) AS DATE) as game_date
+        CAST(gameDateTimeEst AS DATE) as game_date
     FROM iceberg.processed.players_eoinamoore
-    -- AÑADIMOS EL FILTRO AQUÍ TAMBIÉN:
-    WHERE CAST(numMinutes AS INTEGER) > 0
+    WHERE numMinutes > 0
 ),
 games_with_lag AS (
     SELECT 
@@ -40,45 +48,72 @@ FROM games_with_lag
 """
 
 sql_season_stats = """
-CREATE OR REPLACE TABLE iceberg.gold.player_season_stats WITH (format = 'PARQUET') AS
+CREATE OR REPLACE TABLE iceberg.warehouse.player_season_stats WITH (
+    format = 'PARQUET',
+    sorted_by = ARRAY['playerteamName', 'personId', 'season_start_year'],
+    identifier_fields = ARRAY['personId', 'season_start_year']
+) AS
+WITH base_stats AS (
+    SELECT 
+        p.personId,
+        p.firstName || ' ' || p.lastName AS player_name,
+        p.playerteamName,
+        CASE 
+            WHEN EXTRACT(MONTH FROM CAST(p.gameDateTimeEst AS TIMESTAMP)) >= 10 
+            THEN EXTRACT(YEAR FROM CAST(p.gameDateTimeEst AS TIMESTAMP))
+            ELSE EXTRACT(YEAR FROM CAST(p.gameDateTimeEst AS TIMESTAMP)) - 1
+        END AS season_start_year,
+        
+        p.gameId,
+        p.points,
+        p.assists,
+        (p.reboundsOffensive + p.reboundsDefensive) AS total_rebounds,
+        p.steals,
+        p.blocks,
+        p.turnovers
+    FROM iceberg.processed.players_eoinamoore p
+    WHERE p.numMinutes > 0
+)
 SELECT 
-    p.personId,
-    p.firstName || ' ' || p.lastName AS player_name,
-    p.playerteamName,
+    b.personId,
+    b.player_name,
+    b.playerteamName,
+    b.season_start_year,
     
-    -- Ahora las métricas serán reales y aditivas
-    COUNT(p.gameId) AS total_games_played,
-    SUM(p.points) AS total_points,
-    SUM(p.assists) AS total_assists,
-    
-    -- Traemos el salario único
+    COUNT(b.gameId) AS total_games_played,
+    SUM(b.points) AS total_points,
+    ROUND(AVG(CAST(b.points AS DOUBLE)), 1) AS avg_points,
+    SUM(b.assists) AS total_assists,
+    ROUND(AVG(CAST(b.assists AS DOUBLE)), 1) AS avg_assists,
+    SUM(b.total_rebounds) AS total_rebounds_sum,
+    ROUND(AVG(CAST(b.total_rebounds AS DOUBLE)), 1) AS avg_rebounds,
+    SUM(b.steals) AS total_steals,
+    SUM(b.blocks) AS total_blocks,
+    SUM(b.turnovers) AS total_turnovers,
     COALESCE(MAX(s_limpio.salary_usd), 0) AS salary_usd
 
-FROM iceberg.processed.players_eoinamoore p
-
+FROM base_stats b
 LEFT JOIN (
-    -- Subconsulta para tener salarios únicos
-    SELECT 
-        personId, 
-        MAX(salary_usd) AS salary_usd 
+    SELECT personId, MAX(salary_usd) AS salary_usd 
     FROM iceberg.processed.dim_salaries 
     GROUP BY personId
 ) s_limpio 
-    ON CAST(p.personId AS VARCHAR) = CAST(s_limpio.personId AS VARCHAR)
-
-WHERE CAST(p.numMinutes AS INTEGER) > 0
+    ON CAST(b.personId AS VARCHAR) = CAST(s_limpio.personId AS VARCHAR)
 
 GROUP BY 
-    p.personId, 
-    p.firstName, 
-    p.lastName, 
-    p.playerteamName
+    b.personId, 
+    b.player_name, 
+    b.playerteamName,
+    b.season_start_year
 """
+
+sql_pk_game_logs = "ALTER TABLE iceberg.warehouse.game_logs SET PROPERTIES ('identifier-fields' = 'gameId, personId')"
+sql_pk_season_stats = "ALTER TABLE iceberg.warehouse.player_season_stats SET PROPERTIES ('identifier-fields' = 'personId, season_start_year')"
 
 with DAG(
     'dag_nba_oro',
     default_args=default_args,
-    description='Data Marts de la Capa Oro',
+    description='Data Marts de la Capa Oro (Idempotente + Full Refresh)',
     schedule_interval=None, 
     catchup=False,
     tags=['nba', 'iceberg', 'gold'],
@@ -96,4 +131,17 @@ with DAG(
         sql=sql_season_stats
     )
 
-    [crear_game_logs, crear_season_stats]
+    set_pk_game_logs = TrinoOperator(
+        task_id='set_pk_game_logs',
+        trino_conn_id='trino_default',
+        sql=sql_pk_game_logs
+    )
+
+    set_pk_season_stats = TrinoOperator(
+        task_id='set_pk_season_stats',
+        trino_conn_id='trino_default',
+        sql=sql_pk_season_stats
+    )
+
+    crear_game_logs >> set_pk_game_logs
+    crear_season_stats >> set_pk_season_stats

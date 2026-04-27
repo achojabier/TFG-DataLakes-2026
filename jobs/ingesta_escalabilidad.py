@@ -70,9 +70,9 @@ df = df_raw.select(
     col("freeThrowsMade").cast(IntegerType()),
     col("reboundsDefensive").cast(IntegerType()),
     col("reboundsOffensive").cast(IntegerType()),
-    col("foulsPersonal").cast(DoubleType()),
+    col("foulsPersonal").cast(IntegerType()),
     col("turnovers").cast(IntegerType()),
-    col("plusMinusPoints").cast(IntegerType()),
+    col("plusMinus").cast(IntegerType()),
 )
 
 total = df.count()

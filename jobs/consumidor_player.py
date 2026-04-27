@@ -2,10 +2,10 @@ import os
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
 
 def iniciar_consumidor_player():
-    print("⏳ Arrancando Consumidor Spark para Basketball-Reference (Player)...")
+    print("Arrancando Consumidor Spark para los datos de jugadores...")
     
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -59,21 +59,54 @@ def iniciar_consumidor_player():
         StructField("freeThrowsMade", IntegerType(), True),
         StructField("reboundsDefensive", IntegerType(), True),
         StructField("reboundsOffensive", IntegerType(), True),
-        StructField("foulsPersonal", DoubleType(), True),
+        StructField("foulsPersonal", IntegerType(), True),
         StructField("turnovers", IntegerType(), True),
         StructField("plusMinus", IntegerType(), True),
-        StructField("gameDateTimeEst", StringType(), True)
+        StructField("gameDateTimeEst", TimestampType(), True)
     ])
 
-    print("🧊 Inicializando tabla Iceberg 'nba.players_eoinamoore'...")
-    spark.createDataFrame([], esquema).writeTo("iceberg.nba.players_eoinamoore").append()
+    print("Inicializando tabla Iceberg 'nba.players_eoinamoore'...")
 
-    print("🎧 Escuchando canal 'nba_players_eoinamoore' en Kafka...")
+    spark.sql("""
+    CREATE TABLE IF NOT EXISTS iceberg.landing.players_eoinamoore (
+        firstName STRING,
+        lastName STRING,
+        personId STRING,
+        gameId STRING,
+        playerteamName STRING,
+        opponentteamName STRING,
+        gameType STRING,
+        gameLabel STRING,
+        win INT,
+        home INT,
+        numMinutes INT,
+        points INT,
+        assists INT,
+        blocks INT,
+        steals INT,
+        fieldGoalsAttempted INT,
+        fieldGoalsMade INT,
+        threePointersAttempted INT,
+        threePointersMade INT,
+        freeThrowsAttempted INT,
+        freeThrowsMade INT,
+        reboundsDefensive INT,
+        reboundsOffensive INT,
+        foulsPersonal INT,
+        turnovers INT,
+        plusMinus INT,
+        gameDateTimeEst TIMESTAMP
+    ) USING iceberg
+    """)
+
+    spark.createDataFrame([], esquema).writeTo("iceberg.landing.players_eoinamoore").append()
+
+    print("Escuchando canal 'nba_players_eoinamoore' en Kafka...")
     df_kafka = spark.readStream \
         .format("kafka") \
         .option("kafka.bootstrap.servers", "kafka:9092") \
         .option("subscribe", "nba_players_eoinamoore") \
-        .option("startingOffsets", "latest") \
+        .option("startingOffsets", "earliest") \
         .load()
 
     df_tiros = df_kafka.selectExpr("CAST(value AS STRING) as json_payload") \
@@ -85,8 +118,8 @@ def iniciar_consumidor_player():
         .format("iceberg") \
         .outputMode("append") \
         .trigger(processingTime="5 seconds") \
-        .option("path", "iceberg.nba.players_eoinamoore") \
-        .option("checkpointLocation", "s3a://warehouse/checkpoints/players_eoinamoore") \
+        .option("path", "iceberg.landing.players_eoinamoore") \
+        .option("checkpointLocation", "s3a://landing/checkpoints/players_eoinamoore") \
         .start()
 
     query.awaitTermination()

@@ -7,24 +7,24 @@ from kafka import KafkaProducer
 
 def obtener_ultima_fecha_iceberg():
     print("Consultando a Trino/Iceberg el último partido guardado...")
+    fecha_default = '2025-10-20 00:00:00'
     try:
         
         conn = connect(host="trino", port=8080, user="admin")
         cur = conn.cursor()
         
         
-        cur.execute("SELECT MAX(gameDateTimeEst) FROM iceberg.nba.players_eoinamoore")
+        cur.execute("SELECT MAX(gameDateTimeEst) FROM iceberg.landing.players_eoinamoore")
         res = cur.fetchone()
         
         if res and res[0]:
             ultima_fecha = res[0]
-            print(f"✅ Último partido en Iceberg es del: {ultima_fecha}")
+            print(f"Último partido en Iceberg es del: {ultima_fecha}")
             return ultima_fecha
             
     except Exception as e:
         print(f"Aviso: No se pudo consultar la tabla (quizás aún no existe o está vacía).")
         print(f"Detalle del error: {e}")
-        fecha_default = '2025-10-20 00:00:00'
         print(f"Usando fecha por defecto: {fecha_default} (se cargarán todos los partidos)")
     return fecha_default
 
@@ -56,9 +56,8 @@ def simulador_partido_vivo():
             'win', 'home', 'numMinutes', 'points', 'assists', 'blocks', 'steals',
             'fieldGoalsAttempted', 'fieldGoalsMade', 'threePointersAttempted',
             'threePointersMade', 'freeThrowsAttempted', 'freeThrowsMade',
-            'reboundsDefensive', 'reboundsOffensive', 'turnovers', 'plusMinus'
+            'reboundsDefensive', 'reboundsOffensive', 'turnovers', 'plusMinus', 'foulsPersonal'
         ]
-        float_fields = ['foulsPersonal']
         str_fields = ['personId', 'gameId', 'firstName', 'lastName', 
                     'playerteamName', 'opponentteamName', 'gameType', 
                     'gameLabel', 'gameDateTimeEst']
@@ -66,10 +65,6 @@ def simulador_partido_vivo():
         for field in int_fields:
             val = box_score.get(field)
             box_score[field] = int(val) if val is not None and not (isinstance(val, float) and pd.isna(val)) else 0
-
-        for field in float_fields:
-            val = box_score.get(field)
-            box_score[field] = float(val) if val is not None and not (isinstance(val, float) and pd.isna(val)) else 0.0
 
         for field in str_fields:
             val = box_score.get(field)

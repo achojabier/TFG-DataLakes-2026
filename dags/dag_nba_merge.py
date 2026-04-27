@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.trino.operators.trino import TrinoOperator
+from airflow.operators.bash import BashOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from trino.dbapi import connect
 from datetime import datetime, timedelta
@@ -19,7 +20,7 @@ MERGE INTO iceberg.processed.players_eoinamoore AS target
 USING (
     SELECT * FROM (
         SELECT *, ROW_NUMBER() OVER(PARTITION BY gameId, personId ORDER BY gameDateTimeEst DESC) as rn
-        FROM iceberg.nba.players_eoinamoore
+        FROM iceberg.landing.players_eoinamoore
     ) WHERE rn = 1
 ) AS source
 ON target.gameId = source.gameId AND target.personId = source.personId
@@ -74,18 +75,18 @@ def verificar_datos_landing(**context):
     
  
     execution_date = context['execution_date']
-    print(f"🔍 Verificando datos en landing para la ejecución: {execution_date}")
+    print(f"Verificando datos en landing para la ejecución: {execution_date}")
  
     conn = connect(host="trino", port=8080, user="admin")
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM iceberg.nba.players_eoinamoore")
+    cur.execute("SELECT COUNT(*) FROM iceberg.landing.players_eoinamoore")
     count = cur.fetchone()[0]
-    print(f"📊 Filas encontradas en landing: {count}")
+    print(f"Filas encontradas en landing: {count}")
  
     if count == 0:
-        raise ValueError("⛔ La tabla landing está vacía — el MERGE no tiene sentido. ¿Falló la ingesta?")
+        raise ValueError("La tabla landing está vacía — el MERGE no tiene sentido. ¿Falló la ingesta?")
  
-    print("✅ Landing tiene datos. Procediendo con el MERGE.")
+    print("Landing tiene datos. Procediendo con el MERGE.")
 
 with DAG(
     'procesar_capa_plata_nba',
@@ -107,10 +108,16 @@ with DAG(
         sql=sql_merge
     )
 
+    procesar_salarios = BashOperator(
+        task_id='procesar_salarios',
+        bash_command='python /opt/airflow/jobs/procesar_salaries.py',
+        execution_timeout=timedelta(minutes=15)
+    )
+
     disparar_oro = TriggerDagRunOperator(
     task_id='trigger_capa_oro',
     trigger_dag_id='dag_nba_oro', # El nombre exacto de tu otro DAG
     wait_for_completion=False
     )
 
-    verificar_landing >> ejecutar_merge_trino >> disparar_oro
+    verificar_landing >> [ejecutar_merge_trino, procesar_salarios] >> disparar_oro
