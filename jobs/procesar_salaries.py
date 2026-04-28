@@ -3,7 +3,7 @@ from difflib import SequenceMatcher
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, trim, split, regexp_replace
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 
 MINIO_USER     = os.environ.get("MINIO_USER", "admin")
 MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
@@ -41,12 +41,32 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")
+print("Leyendo salarios crudos desde landing y transformando años a filas...")
+# Usamos stack para coger las columnas de los años y convertirlas en filas (season, salary_usd)
+df_salaries_unpivoted = spark.sql("""
+    SELECT 
+        fullname,
+        playerteamName,
+        season,
+        CAST(salary_usd AS DOUBLE) as salary_usd
+    FROM (
+        SELECT 
+            fullname,
+            playerteamName,
+            stack(6, 
+                '2025-26', `2025-26`, 
+                '2026-27', `2026-27`, 
+                '2027-28', `2027-28`, 
+                '2028-29', `2028-29`, 
+                '2029-30', `2029-30`, 
+                '2030-31', `2030-31`
+            ) as (season, salary_usd)
+        FROM iceberg.landing.dim_salaries_raw
+    )
+    WHERE salary_usd IS NOT NULL AND salary_usd > 0
+""")
 
-print("Leyendo salarios crudos desde landing...")
-pdf_salaries = spark.sql("""
-    SELECT fullname, salary_usd
-    FROM iceberg.landing.dim_salaries_raw
-""").toPandas()
+pdf_salaries = df_salaries_unpivoted.toPandas()
 
 pdf_salaries["firstname"] = pdf_salaries["fullname"].str.split(" ").str[0].str.strip()
 pdf_salaries["lastname"]  = pdf_salaries["fullname"].str.replace(r"^\S+\s+", "", regex=True).str.strip()
@@ -83,13 +103,14 @@ matched, unmatched, results, low_confidence = 0, 0, [], []
 
 for _, row in pdf_salaries.iterrows():
     person_id, matched_name, score = best_match(row["fullname"], pdf_registry)
-    results.append({
-        "personid":   person_id,
-        "firstname":  row["firstname"],
-        "lastname":   row["lastname"],
-        "salary_usd": row["salary_usd"],
-    })
     if person_id:
+        results.append({
+            "personid":   int(person_id),
+            "player_name": row["fullname"],
+            "season":     row["season"],      
+            "salary_usd": float(row["salary_usd"]),
+            "playerteamName": row["playerteamName"]
+        })
         matched += 1
         if score < 0.95:
             low_confidence.append((row["fullname"], matched_name, round(score, 3)))
@@ -105,20 +126,22 @@ if low_confidence:
     for salary_name, registry_name, score in low_confidence[:10]:
         print(f"  '{salary_name}' → '{registry_name}' (score={score})")
 
+# EL ESQUEMA AHORA COINCIDE CON LA TABLA ICEBERG
 schema = StructType([
-    StructField("personid",   StringType(), True),
-    StructField("firstname",  StringType(), True),
-    StructField("lastname",   StringType(), True),
+    StructField("personid",   LongType(), True),
+    StructField("player_name", StringType(), True),
+    StructField("season",     StringType(), True),
     StructField("salary_usd", DoubleType(), True),
+    StructField("playerteamName", StringType(), True),
 ])
 
-df_final = spark.createDataFrame(pd.DataFrame(results), schema=schema)
+df_final = spark.createDataFrame(results, schema=schema)
 
-print("Escribiendo a iceberg.processed.dim_salaries...")
+print("Escribiendo a iceberg.processed.dim_salaries (haciendo APPEND)...")
+# Usamos append() porque la tabla ya está creada y gestionada por el DAG de Init
 df_final.writeTo("iceberg.processed.dim_salaries") \
     .using("iceberg") \
-    .tableProperty("write.format.default", "parquet") \
-    .createOrReplace()
+    .append()
 
 count = spark.sql("SELECT COUNT(*) FROM iceberg.processed.dim_salaries").collect()[0][0]
 print(f"dim_salaries tiene {count} filas")

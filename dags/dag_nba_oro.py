@@ -8,17 +8,15 @@ default_args = {
     'start_date': datetime(2025, 10, 20),
 }
 
+sql_delete_game_logs = "DELETE FROM iceberg.warehouse.game_logs"
+
 sql_game_logs = """
-CREATE OR REPLACE TABLE iceberg.warehouse.game_logs WITH (
-    format = 'PARQUET',
-    sorted_by = ARRAY['playerteamName', 'personId'],
-    identifier_fields = ARRAY['gameId', 'personId']
-) AS
+INSERT INTO iceberg.warehouse.game_logs
 WITH player_games AS (
     SELECT 
-        personId,
+        personid,
         firstName || ' ' || lastName AS player_name,
-        gameId,
+        gameid,
         playerteamName,
         points,
         assists,
@@ -28,43 +26,51 @@ WITH player_games AS (
         blocks,
         turnovers,
         numMinutes,
-        CAST(gameDateTimeEst AS DATE) as game_date
+        CAST(gamedatetimeest AS DATE) as game_date
     FROM iceberg.processed.players_eoinamoore
     WHERE numMinutes > 0
 ),
 games_with_lag AS (
     SELECT 
         *,
-        LAG(game_date) OVER (PARTITION BY personId ORDER BY game_date) AS prev_game_date
+        LAG(game_date) OVER (PARTITION BY personid ORDER BY game_date) AS prev_game_date
     FROM player_games
 )
 SELECT 
-    *,
-    CASE 
-        WHEN date_diff('day', prev_game_date, game_date) = 1 THEN true 
-        ELSE false 
-    END AS is_back_to_back
+    personid,
+    player_name,
+    gameid,
+    playerteamName,
+    points,
+    assists,
+    reboundsOffensive,
+    reboundsDefensive,
+    steals,
+    blocks,
+    turnovers,
+    CAST(numMinutes AS DOUBLE) as numMinutes,
+    game_date,
+    prev_game_date,
+    CASE WHEN date_diff('day', prev_game_date, game_date) = 1 THEN true ELSE false END AS is_back_to_back
 FROM games_with_lag
 """
 
+sql_delete_season_stats = "DELETE FROM iceberg.warehouse.player_season_stats"
+
+# --- 2. Usamos DELETE + INSERT para Season Stats ---
 sql_season_stats = """
-CREATE OR REPLACE TABLE iceberg.warehouse.player_season_stats WITH (
-    format = 'PARQUET',
-    sorted_by = ARRAY['playerteamName', 'personId', 'season_start_year'],
-    identifier_fields = ARRAY['personId', 'season_start_year']
-) AS
+INSERT INTO iceberg.warehouse.player_season_stats
 WITH base_stats AS (
     SELECT 
-        p.personId,
+        p.personid,
         p.firstName || ' ' || p.lastName AS player_name,
         p.playerteamName,
         CASE 
-            WHEN EXTRACT(MONTH FROM CAST(p.gameDateTimeEst AS TIMESTAMP)) >= 10 
-            THEN EXTRACT(YEAR FROM CAST(p.gameDateTimeEst AS TIMESTAMP))
-            ELSE EXTRACT(YEAR FROM CAST(p.gameDateTimeEst AS TIMESTAMP)) - 1
+            WHEN EXTRACT(MONTH FROM CAST(p.gamedatetimeest AS TIMESTAMP)) >= 10 
+            THEN EXTRACT(YEAR FROM CAST(p.gamedatetimeest AS TIMESTAMP))
+            ELSE EXTRACT(YEAR FROM CAST(p.gamedatetimeest AS TIMESTAMP)) - 1
         END AS season_start_year,
-        
-        p.gameId,
+        p.gameid,
         p.points,
         p.assists,
         (p.reboundsOffensive + p.reboundsDefensive) AS total_rebounds,
@@ -75,12 +81,11 @@ WITH base_stats AS (
     WHERE p.numMinutes > 0
 )
 SELECT 
-    b.personId,
+    b.personid,
     b.player_name,
     b.playerteamName,
     b.season_start_year,
-    
-    COUNT(b.gameId) AS total_games_played,
+    COUNT(b.gameid) AS total_games_played,
     SUM(b.points) AS total_points,
     ROUND(AVG(CAST(b.points AS DOUBLE)), 1) AS avg_points,
     SUM(b.assists) AS total_assists,
@@ -91,25 +96,19 @@ SELECT
     SUM(b.blocks) AS total_blocks,
     SUM(b.turnovers) AS total_turnovers,
     COALESCE(MAX(s_limpio.salary_usd), 0) AS salary_usd
-
 FROM base_stats b
 LEFT JOIN (
-    SELECT personId, MAX(salary_usd) AS salary_usd 
+    SELECT personid, MAX(salary_usd) AS salary_usd 
     FROM iceberg.processed.dim_salaries 
-    GROUP BY personId
+    GROUP BY personid
 ) s_limpio 
-    ON CAST(b.personId AS VARCHAR) = CAST(s_limpio.personId AS VARCHAR)
-
+    ON CAST(b.personid AS VARCHAR) = CAST(s_limpio.personid AS VARCHAR)
 GROUP BY 
-    b.personId, 
+    b.personid, 
     b.player_name, 
     b.playerteamName,
     b.season_start_year
 """
-
-sql_pk_game_logs = "ALTER TABLE iceberg.warehouse.game_logs SET PROPERTIES ('identifier-fields' = 'gameId, personId')"
-sql_pk_season_stats = "ALTER TABLE iceberg.warehouse.player_season_stats SET PROPERTIES ('identifier-fields' = 'personId, season_start_year')"
-
 with DAG(
     'dag_nba_oro',
     default_args=default_args,
@@ -118,6 +117,18 @@ with DAG(
     catchup=False,
     tags=['nba', 'iceberg', 'gold'],
 ) as dag:
+
+    delete_game_logs = TrinoOperator(
+        task_id='delete_game_logs',
+        trino_conn_id='trino_default',
+        sql=sql_delete_game_logs
+    )
+
+    sql_delete_season_stats = TrinoOperator(
+        task_id='delete_season_stats',
+        trino_conn_id='trino_default',
+        sql=sql_delete_season_stats
+    )
 
     crear_game_logs = TrinoOperator(
         task_id='create_gold_game_logs',
@@ -131,17 +142,5 @@ with DAG(
         sql=sql_season_stats
     )
 
-    set_pk_game_logs = TrinoOperator(
-        task_id='set_pk_game_logs',
-        trino_conn_id='trino_default',
-        sql=sql_pk_game_logs
-    )
-
-    set_pk_season_stats = TrinoOperator(
-        task_id='set_pk_season_stats',
-        trino_conn_id='trino_default',
-        sql=sql_pk_season_stats
-    )
-
-    crear_game_logs >> set_pk_game_logs
-    crear_season_stats >> set_pk_season_stats
+    delete_game_logs >> crear_game_logs
+    sql_delete_season_stats >> crear_season_stats

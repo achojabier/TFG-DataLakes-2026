@@ -19,7 +19,20 @@ sql_merge = """
 MERGE INTO iceberg.processed.players_eoinamoore AS target
 USING (
     SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER(PARTITION BY gameId, personId ORDER BY gameDateTimeEst DESC) as rn
+        SELECT 
+            firstName, lastName,
+            CAST(personId AS BIGINT) AS personId,
+            CAST(gameId AS BIGINT) AS gameId,
+            playerteamName, opponentteamName, gameType, gameLabel,
+            CAST(win AS BOOLEAN) AS win,
+            CAST(home AS BOOLEAN) AS home,
+            numMinutes, points, assists, blocks, steals,
+            fieldGoalsAttempted, fieldGoalsMade,
+            threePointersAttempted, threePointersMade,
+            freeThrowsAttempted, freeThrowsMade,
+            reboundsDefensive, reboundsOffensive,
+            foulsPersonal, turnovers, plusMinus, gameDateTimeEst,
+            ROW_NUMBER() OVER(PARTITION BY gameId, personId ORDER BY gameDateTimeEst DESC) as rn
         FROM iceberg.landing.players_eoinamoore
     ) WHERE rn = 1
 ) AS source
@@ -50,10 +63,10 @@ WHEN MATCHED THEN
         foulsPersonal = source.foulsPersonal,
         turnovers = source.turnovers,
         plusMinus = source.plusMinus,
-        gameDateTimeEst = source.gameDateTimeEst
+        gamedatetimeest = source.gamedatetimeest
 WHEN NOT MATCHED THEN
     INSERT VALUES (
-        source.firstName, source.lastName, source.personId, source.gameId, 
+        source.firstName, source.lastName, source.personid, source.gameid, 
         source.playerteamName, source.opponentteamName, source.gameType, 
         source.gameLabel, source.win, source.home, source.numMinutes, 
         source.points, source.assists, source.blocks, source.steals, 
@@ -62,7 +75,7 @@ WHEN NOT MATCHED THEN
         source.freeThrowsAttempted, source.freeThrowsMade, 
         source.reboundsDefensive, source.reboundsOffensive, 
         source.foulsPersonal, source.turnovers, source.plusMinus, 
-        source.gameDateTimeEst
+        source.gamedatetimeest
     )
 """
 def verificar_datos_landing(**context):

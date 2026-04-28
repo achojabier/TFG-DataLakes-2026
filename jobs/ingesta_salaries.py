@@ -1,15 +1,12 @@
 import os
-from difflib import SequenceMatcher
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, trim, split, regexp_replace
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+from pyspark.sql.functions import col, trim
 
 MINIO_USER     = os.environ.get("MINIO_USER", "admin")
 MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
 MINIO_ENDPOINT = "http://minio:9000"
 CSV_PATH       = "/opt/airflow/jobs/hoopshype_nba_salaries.csv"
-
 
 paquetes = (
     "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
@@ -42,11 +39,16 @@ spark.sparkContext.setLogLevel("WARN")
 print("Loading salary CSV...")
 df_raw = spark.read.csv(CSV_PATH, header=True, inferSchema=True)
 
+# ¡Novedad! Nos traemos todas las columnas de temporadas a la capa Landing
 df_salaries = df_raw.select(
     trim(col("player")).alias("fullname"),
-    col("`2025-26`").cast("double").alias("salary_usd")
-).filter(
-    col("salary_usd").isNotNull() & (col("salary_usd") > 0)
+    col("team").alias("playerteamName"),
+    col("`2025-26`").cast("double").alias("2025-26"),
+    col("`2026-27`").cast("double").alias("2026-27"),
+    col("`2027-28`").cast("double").alias("2027-28"),
+    col("`2028-29`").cast("double").alias("2028-29"),
+    col("`2029-30`").cast("double").alias("2029-30"),
+    col("`2030-31`").cast("double").alias("2030-31")
 )
 
 print("Escribiendo a iceberg.landing.dim_salaries_raw...")
