@@ -1,9 +1,10 @@
+import sys
 import time
 import os
 import csv
 import statistics
 from datetime import datetime
-
+from trino.dbapi import connect
 import pandas as pd
 
 TRINO_HOST     = os.environ.get("TRINO_HOST", "trino")
@@ -12,7 +13,7 @@ TRINO_USER     = "admin"
 MINIO_USER     = os.environ.get("MINIO_USER", "admin")
 MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
 MINIO_ENDPOINT = "http://minio:9000"
-CSV_PATH       = "/home/iceberg/jobs/PlayerStatistics.csv"
+CSV_PATH = os.environ.get("CSV_PATH", "/home/iceberg/jobs/PlayerStatistics.csv")
 
 N_RUNS = 3
 
@@ -21,19 +22,19 @@ TIERS = [
         "name":       "Tier 1 — 30k",
         "table":      "iceberg.processed.players_eoinamoore",
         "csv_filter": ("2025-05-24", "2026-03-21"),
-        "rows":       30590,
+        "rows":       None,# will be filled in later by querying Iceberg metadata
     },
     {
         "name":       "Tier 2 — 389k",
         "table":      "iceberg.processed.players_500k",
         "csv_filter": ("2015-10-01", "2026-03-21"),
-        "rows":       389139,
+        "rows":       None,
     },
     {
         "name":       "Tier 3 — 1.66M",
         "table":      "iceberg.processed.players_full",
         "csv_filter": None,  # use full CSV
-        "rows":       1662746,
+        "rows":       None,
     },
 ]
 
@@ -55,6 +56,7 @@ QUERIES = [
             FROM {TABLE}
             WHERE points >= 30
             ORDER BY points DESC
+            LIMIT 100
         """,
     },
     {
@@ -102,12 +104,31 @@ QUERIES = [
             ORDER BY fg_pct DESC
         """,
     },
+            {
+        "id":          "Q_skip_team",
+        "description": "Data skipping — filter on one team (non‑partition column)",
+        "category":    "Scan (filtered)",
+        "sql":         """
+            SELECT COUNT(*)
+            FROM {TABLE}
+            WHERE playerteamname = 'Boston Celtics'
+        """,
+    },
+    {
+        "id":          "Q_skip_player",
+        "description": "Data skipping — filter on one player (non‑partition column)",
+        "category":    "Scan (filtered)",
+        "sql":         """
+            SELECT COUNT(*)
+            FROM {TABLE}
+            WHERE personid = 2544
+        """,
+    },
 ]
 
 
 
 def run_trino_tier(tier):
-    from trino.dbapi import connect
     conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
     results = []
 
@@ -123,6 +144,20 @@ def run_trino_tier(tier):
                 t0 = time.perf_counter()
                 cur.execute(sql)
                 rows = cur.fetchall()
+                bytes_scanned = None
+                if q["id"] in ("Q_skip_team", "Q_skip_player"):
+                    try:
+                        query_id = cur.query_id
+                        cur_stats = conn.cursor()
+                        cur_stats.execute(
+                            "SELECT physical_input_bytes FROM system.runtime.query_stats WHERE query_id = %s",
+                            (query_id,),
+                        )
+                        row_stats = cur_stats.fetchone()
+                        if row_stats and row_stats[0] is not None:
+                            bytes_scanned = int(row_stats[0])
+                    except Exception:
+                        bytes_scanned = None
                 elapsed = round((time.perf_counter() - t0) * 1000, 2)
                 times.append(elapsed)
                 row_count = len(rows)
@@ -145,6 +180,7 @@ def run_trino_tier(tier):
             "max_ms":      round(max(valid), 2) if valid else None,
             "stddev_ms":   round(statistics.stdev(valid), 2) if len(valid) > 1 else 0,
             "row_count":   row_count,
+            "bytes_scanned": bytes_scanned,
             "error":       error,
         })
 
@@ -164,7 +200,9 @@ def run_spark_tier(spark, tier):
             try:
                 t0 = time.perf_counter()
                 df = spark.sql(sql)
-                row_count = df.count()
+                rows = df.collect() 
+                row_count = len(rows)  # force full execution
+                bytes_scanned = None
                 elapsed = round((time.perf_counter() - t0) * 1000, 2)
                 times.append(elapsed)
                 print(f"Run {run+1}: {elapsed} ms")
@@ -186,25 +224,15 @@ def run_spark_tier(spark, tier):
             "max_ms":      round(max(valid), 2) if valid else None,
             "stddev_ms":   round(statistics.stdev(valid), 2) if len(valid) > 1 else 0,
             "row_count":   row_count,
+            "bytes_scanned": bytes_scanned,
             "error":       error,
         })
 
     return results
 
 
-def run_pandas_tier(tier):
+def run_pandas_tier(tier, df):
     results = []
-
-    print(f"Loading CSV slice for {tier['name']}...")
-    df = pd.read_csv(CSV_PATH, low_memory=False)
-    df["gameDateTimeEst"] = pd.to_datetime(df["gameDateTimeEst"], errors="coerce")
-
-    if tier["csv_filter"]:
-        start, end = tier["csv_filter"]
-        df = df[
-            (df["gameDateTimeEst"] >= start) &
-            (df["gameDateTimeEst"] <= end)
-        ].copy()
 
     print(f"Pandas slice rows: {len(df):,}")
 
@@ -215,7 +243,7 @@ def run_pandas_tier(tier):
         },
         {
             "id": "Q2_filter",
-            "fn": lambda d: d[d["points"] >= 30].sort_values("points", ascending=False),
+            "fn": lambda d: d[d["points"] >= 30].sort_values("points", ascending=False).head(100),
         },
         {
             "id": "Q3_aggregation",
@@ -234,15 +262,30 @@ def run_pandas_tier(tier):
         },
         {
             "id": "Q5_multi_agg",
-            "fn": lambda d: d.groupby("playerteamName").apply(
-                lambda g: pd.Series({
-                    "fg_pct": round(g["fieldGoalsMade"].sum() / g["fieldGoalsAttempted"].sum() * 100, 2)
-                              if g["fieldGoalsAttempted"].sum() > 0 else None,
-                    "three_pct": round(g["threePointersMade"].sum() / g["threePointersAttempted"].sum() * 100, 2)
-                              if g["threePointersAttempted"].sum() > 0 else None,
-                    "players_used": g["personId"].nunique(),
-                }), include_groups=False
-            ).sort_values("fg_pct", ascending=False),
+            "fn": lambda d: (
+                d.groupby("playerteamName")
+                .agg(
+                    fg_made_sum      = ("fieldGoalsMade", "sum"),
+                    fg_attempted_sum = ("fieldGoalsAttempted", "sum"),
+                    three_made_sum   = ("threePointersMade", "sum"),
+                    three_attempted_sum = ("threePointersAttempted", "sum"),
+                    players_used     = ("personId", pd.Series.nunique)
+                )
+                .assign(
+                    fg_pct    = lambda x: (x.fg_made_sum / x.fg_attempted_sum * 100).round(2).fillna(0),
+                    three_pct = lambda x: (x.three_made_sum / x.three_attempted_sum * 100).round(2).fillna(0),
+                )
+                .drop(columns=["fg_made_sum", "fg_attempted_sum", "three_made_sum", "three_attempted_sum"])
+                .sort_values("fg_pct", ascending=False)
+            ),
+        },
+                {
+            "id": "Q_skip_team",
+            "fn": lambda d: len(d[d["playerteamName"] == "Boston Celtics"]),
+        },
+        {
+            "id": "Q_skip_player",
+            "fn": lambda d: len(d[d["personId"] == 2544]),
         },
     ]
 
@@ -277,6 +320,7 @@ def run_pandas_tier(tier):
             "max_ms":      round(max(valid), 2) if valid else None,
             "stddev_ms":   round(statistics.stdev(valid), 2) if len(valid) > 1 else 0,
             "row_count":   row_count,
+            "bytes_scanned": None,
             "error":       error,
         })
 
@@ -294,15 +338,33 @@ if __name__ == "__main__":
 
     print("\nWarming up Trino...")
     try:
-        from trino.dbapi import connect
+        
         conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
         for _ in range(3):
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM iceberg.processed.players_eoinamoore")
             cur.fetchall()
         print("Trino warm ✓")
+
+        cur = conn.cursor()
+        for tier in TIERS:
+            cur.execute(f"SELECT COUNT(*) FROM {tier['table']}")
+            tier["rows"] = cur.fetchone()[0]
+            print(f"  {tier['name']}: {tier['rows']:,} rows")
+        cur.close()
+        print("Row counts resolved ✓")
     except Exception as e:
-        print(f"Warmup failed: {e}")
+        print(f"Trino setup failed: {e}")
+        print("Aborting benchmark – Trino is required.")
+        sys.exit(1)
+
+
+
+    # Load once
+    if not os.path.isfile(CSV_PATH):
+        raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
+    df_full = pd.read_csv(CSV_PATH, low_memory=False)
+    df_full["gameDateTimeEst"] = pd.to_datetime(df_full["gameDateTimeEst"], errors="coerce")
 
     print("\n" + "="*60)
     print("TRINO BENCHMARK")
@@ -345,6 +407,15 @@ if __name__ == "__main__":
             .getOrCreate()
         spark.sparkContext.setLogLevel("WARN")
 
+        print("\nWarming up Spark...")
+        try:
+            warmup_table = TIERS[0]["table"] 
+            for _ in range(3):
+                spark.sql(f"SELECT COUNT(*) FROM {warmup_table}").collect()
+            print("Spark warmed up")
+        except Exception as e:
+            print(f"Spark warmup failed: {e}")
+
         for tier in TIERS:
             print(f"\n[{tier['name']}] {tier['rows']:,} rows")
             try:
@@ -361,8 +432,14 @@ if __name__ == "__main__":
     print("="*60)
     for tier in TIERS:
         print(f"\n  [{tier['name']}] {tier['rows']:,} rows")
+        if tier["csv_filter"]:
+            start, end = tier["csv_filter"]
+            df_slice = df_full[(df_full["gameDateTimeEst"] >= start) & (df_full["gameDateTimeEst"] <= end)].copy()
+        else:
+            df_slice = df_full.copy()
+        print(f"  Pandas slice rows: {len(df_slice):,}")
         try:
-            all_results += run_pandas_tier(tier)
+            all_results += run_pandas_tier(tier, df_slice)
         except Exception as e:
             print(f"ERROR: {e}")
 
@@ -371,7 +448,7 @@ if __name__ == "__main__":
 
     fieldnames = ["engine", "tier", "rows", "query_id", "category",
                   "description", "avg_ms", "min_ms", "max_ms", "stddev_ms",
-                  "row_count", "error"]
+                  "row_count","bytes_scanned", "error"]
     with open(results_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()

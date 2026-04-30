@@ -287,7 +287,8 @@ def run_spark_benchmarks():
             try:
                 t0 = time.perf_counter()
                 df = spark.sql(q["sql"])
-                row_count = df.count()  # force full execution
+                rows = df.collect()   # en vez de df.count()
+                row_count = len(rows)  # force full execution
                 t1 = time.perf_counter()
                 elapsed = round((t1 - t0) * 1000, 2)
                 times.append(elapsed)

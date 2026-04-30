@@ -303,13 +303,8 @@ def comparar_storage(spark):
             hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
             fs_uri = spark._jvm.org.apache.hadoop.fs.Path(delta_path).toUri()
             fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(fs_uri, hadoop_conf)
-            status = fs.listStatus(
-                spark._jvm.org.apache.hadoop.fs.Path(delta_path)
-            )
-            total_bytes = sum(
-                s.getLen() for s in status
-                if str(s.getPath().getName()).endswith(".parquet")
-            )
+            content_summary = fs.getContentSummary(spark._jvm.org.apache.hadoop.fs.Path(delta_path))
+            total_bytes = content_summary.getLength()
             size_mb = round(total_bytes / (1024 * 1024), 2)
             print(f"Delta:{tier_name:<15}: {size_mb} MB")
             sizes.append({"format": "Delta Lake", "tier": tier_name, "size_mb": size_mb})

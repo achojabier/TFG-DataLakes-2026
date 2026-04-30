@@ -48,9 +48,9 @@ df_raw = spark.read.csv(CSV_PATH, header=True, inferSchema=False)
 df = df_raw.select(
     col("firstName").cast(StringType()),
     col("lastName").cast(StringType()),
-    col("personId").cast(StringType()),
-    col("gameId").cast(StringType()),
-    col("gameDateTimeEst").cast(StringType()),
+    col("personId").cast(IntegerType()),
+    col("gameId").cast(IntegerType()),
+    col("gameDateTimeEst").cast("timestamp").alias("gamedatetimeest"),
     col("playerteamName").cast(StringType()),
     col("opponentteamName").cast(StringType()),
     col("gameType").cast(StringType()),
@@ -72,7 +72,7 @@ df = df_raw.select(
     col("reboundsOffensive").cast(IntegerType()),
     col("foulsPersonal").cast(IntegerType()),
     col("turnovers").cast(IntegerType()),
-    col("plusMinus").cast(IntegerType()),
+    col("plusMinusPoints").cast(IntegerType()).alias("plusMinus"),
 )
 
 total = df.count()
@@ -94,7 +94,7 @@ for c in ["points", "assists", "rebounds_total", "gameType", "win", "numMinutes"
 
 print("\nCreating players_500k (2015-16 season onwards)...")
 df_500k = df.filter(
-    col("gameDateTimeEst") >= "2015-10-01"
+    col("gamedatetimeest") >= "2015-10-01"
 )
 count_500k = df_500k.count()
 print(f"Rows: {count_500k:,}")
@@ -102,6 +102,8 @@ print(f"Rows: {count_500k:,}")
 df_500k.writeTo("iceberg.processed.players_500k") \
     .using("iceberg") \
     .tableProperty("write.format.default", "parquet") \
+    .option("write.partitioning", "months(gamedatetimeest)") \
+    .option("write.sort.order", "playerteamName ASC, gameDateTimeEst DESC, personId ASC") \
     .createOrReplace()
 
 print(f"players_500k created: {count_500k:,} rows")
@@ -112,6 +114,8 @@ print("\nCreating players_full (full 1947-present dataset)...")
 df.writeTo("iceberg.processed.players_full") \
     .using("iceberg") \
     .tableProperty("write.format.default", "parquet") \
+    .option("write.partitioning", "months(gamedatetimeest)") \
+    .option("write.sort.order", "playerteamName ASC, gameDateTimeEst DESC, personId ASC") \
     .createOrReplace()
 
 print(f"players_full created: {total:,} rows")
