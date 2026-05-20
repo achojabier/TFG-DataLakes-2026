@@ -258,7 +258,6 @@ def run_spark_benchmarks():
     print("\n" + "="*60)
     print("SPARK SQL BENCHMARK")
     print("="*60)
-
     
     spark = get_spark_session("Benchmark_Spark_SQL")
 
