@@ -8,10 +8,8 @@ default_args = {
     'start_date': datetime(2025, 10, 20),
 }
 
-sql_delete_game_logs = "DELETE FROM iceberg.warehouse.game_logs"
-
 sql_game_logs = """
-INSERT INTO iceberg.warehouse.game_logs
+CREATE OR REPLACE TABLE iceberg.warehouse.game_logs AS
 WITH player_games AS (
     SELECT 
         personid,
@@ -49,17 +47,15 @@ SELECT
     blocks,
     turnovers,
     CAST(numMinutes AS DOUBLE) as numMinutes,
+    rating,
     game_date,
     prev_game_date,
     CASE WHEN date_diff('day', prev_game_date, game_date) = 1 THEN true ELSE false END AS is_back_to_back
 FROM games_with_lag
 """
 
-sql_delete_season_stats = "DELETE FROM iceberg.warehouse.player_season_stats"
-
-# --- 2. Usamos DELETE + INSERT para Season Stats ---
 sql_season_stats = """
-INSERT INTO iceberg.warehouse.player_season_stats
+CREATE OR REPLACE TABLE iceberg.warehouse.player_season_stats AS
 WITH base_stats AS (
     SELECT 
         p.personid,
@@ -95,6 +91,7 @@ SELECT
     SUM(b.steals) AS total_steals,
     SUM(b.blocks) AS total_blocks,
     SUM(b.turnovers) AS total_turnovers,
+    ROUND(AVG(CAST(b.rating AS DOUBLE)), 1) AS avg_rating,
     COALESCE(MAX(s_limpio.salary_usd), 0) AS salary_usd
 FROM base_stats b
 LEFT JOIN (
@@ -109,6 +106,7 @@ GROUP BY
     b.playerteamName,
     b.season_start_year
 """
+
 with DAG(
     'dag_nba_oro',
     default_args=default_args,
@@ -117,18 +115,6 @@ with DAG(
     catchup=False,
     tags=['nba', 'iceberg', 'gold'],
 ) as dag:
-
-    delete_game_logs = TrinoOperator(
-        task_id='delete_game_logs',
-        trino_conn_id='trino_default',
-        sql=sql_delete_game_logs
-    )
-
-    sql_delete_season_stats = TrinoOperator(
-        task_id='delete_season_stats',
-        trino_conn_id='trino_default',
-        sql=sql_delete_season_stats
-    )
 
     crear_game_logs = TrinoOperator(
         task_id='create_gold_game_logs',
@@ -142,5 +128,4 @@ with DAG(
         sql=sql_season_stats
     )
 
-    delete_game_logs >> crear_game_logs
-    sql_delete_season_stats >> crear_season_stats
+    [crear_game_logs, crear_season_stats]

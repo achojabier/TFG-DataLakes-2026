@@ -4,43 +4,11 @@ import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, trim, split, regexp_replace
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+from spark.spark_utils import get_spark_session
 
-MINIO_USER     = os.environ.get("MINIO_USER", "admin")
-MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
-MINIO_ENDPOINT = "http://minio:9000"
-
-# Minimum similarity score to accept a fuzzy match (0.0 - 1.0)
-# 0.80 is conservative — catches "Santi/Santiago", "Jr."/"III" suffixes
-# but avoids false positives between similar names
 FUZZY_THRESHOLD = 0.80
 
-paquetes = (
-    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
-    "org.apache.hadoop:hadoop-aws:3.3.4,"
-    "org.apache.iceberg:iceberg-aws-bundle:1.5.0"
-)
-
-spark = SparkSession.builder \
-    .appName("Procesar_Salaries") \
-    .config("spark.jars.packages", paquetes) \
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-    .config("spark.sql.catalog.iceberg.type", "rest") \
-    .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-    .config("spark.sql.catalog.iceberg.s3.endpoint", MINIO_ENDPOINT) \
-    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-    .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
-    .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
-    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-    .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-    .getOrCreate()
-
-spark.sparkContext.setLogLevel("WARN")
+spark = get_spark_session("Procesar_Salaries")
 print("Leyendo salarios crudos desde landing y transformando años a filas...")
 # Usamos stack para coger las columnas de los años y convertirlas en filas (season, salary_usd)
 df_salaries_unpivoted = spark.sql("""
@@ -137,11 +105,21 @@ schema = StructType([
 
 df_final = spark.createDataFrame(results, schema=schema)
 
-print("Escribiendo a iceberg.processed.dim_salaries (haciendo APPEND)...")
-# Usamos append() porque la tabla ya está creada y gestionada por el DAG de Init
-df_final.writeTo("iceberg.processed.dim_salaries") \
-    .using("iceberg") \
-    .append()
+print("Aplicando operación UPSERT (MERGE) en iceberg.processed.dim_salaries...")
+
+df_final.createOrReplaceTempView("salarios_nuevos")
+
+# 2. Hacemos la magia de Iceberg: cruzamos por ID y Temporada
+spark.sql("""
+    MERGE INTO iceberg.processed.dim_salaries t
+    USING salarios_nuevos s
+    ON t.personid = s.personid AND t.season = s.season
+    WHEN MATCHED THEN 
+        UPDATE SET t.salary_usd = s.salary_usd, t.playerteamName = s.playerteamName
+    WHEN NOT MATCHED THEN 
+        INSERT *
+""")
+
 
 count = spark.sql("SELECT COUNT(*) FROM iceberg.processed.dim_salaries").collect()[0][0]
 print(f"dim_salaries tiene {count} filas")

@@ -203,6 +203,19 @@ def run_trino_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            cur = conn.cursor()
+            t0 = time.perf_counter()
+            cur.execute(q["sql"])
+            rows = cur.fetchall()
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            print(f"Warmup: {warmup_ms} ms — {len(rows)} rows (not counted)")
+        except Exception as e:
+            print(f"Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 cur = conn.cursor()
@@ -241,38 +254,13 @@ def run_trino_benchmarks():
 
 def run_spark_benchmarks():
     from pyspark.sql import SparkSession
-
+    from spark.spark_utils import get_spark_session
     print("\n" + "="*60)
     print("SPARK SQL BENCHMARK")
     print("="*60)
 
-    paquetes = (
-        "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
-        "org.apache.hadoop:hadoop-aws:3.3.4,"
-        "org.apache.iceberg:iceberg-aws-bundle:1.5.0"
-    )
-
-    spark = SparkSession.builder \
-        .appName("TFG_Benchmark") \
-        .config("spark.jars.packages", paquetes) \
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-        .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-        .config("spark.sql.catalog.iceberg.type", "rest") \
-        .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-        .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-        .config("spark.sql.catalog.iceberg.s3.endpoint", MINIO_ENDPOINT) \
-        .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-        .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
-        .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
-        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-                "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-        .getOrCreate()
-
-    spark.sparkContext.setLogLevel("WARN")
+    
+    spark = get_spark_session("Benchmark_Spark_SQL")
 
     results = []
 
@@ -283,6 +271,18 @@ def run_spark_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            t0 = time.perf_counter()
+            df_warmup = spark.sql(q["sql"])
+            rows_warmup = df_warmup.collect()
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            print(f"Warmup: {warmup_ms} ms — {len(rows_warmup)} rows (not counted)")
+        except Exception as e:
+            print(f"Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -456,6 +456,18 @@ def run_pandas_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            t0 = time.perf_counter()
+            result_warmup = q["fn"]()
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            rows_warmup = len(result_warmup) if hasattr(result_warmup, "__len__") else 1
+            print(f"Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+        except Exception as e:
+            print(f"Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -509,7 +521,7 @@ def measure_storage_sizes():
             sizes.append({"format": "CSV", "file": os.path.basename(f), "size_mb": size_mb})
         except FileNotFoundError:
             print(f"NOT FOUND: {f}")
-    
+
     conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
     iceberg_tables = [
         ("iceberg.processed", "players_eoinamoore"),
@@ -531,8 +543,8 @@ def measure_storage_sizes():
 
 def save_results(all_results, storage_sizes):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"benchmark_results_{timestamp}.csv"
-    storage_file = f"storage_sizes_{timestamp}.csv"
+    results_file = f"/home/iceberg/jobs/benchmark_results_{timestamp}.csv"
+    storage_file = f"/home/iceberg/jobs/storage_sizes_{timestamp}.csv"
 
     fieldnames = ["engine", "format", "query_id", "category", "description",
                   "runs", "avg_ms", "min_ms", "max_ms", "stddev_ms", "row_count", "error"]

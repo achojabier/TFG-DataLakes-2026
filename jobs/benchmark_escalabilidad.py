@@ -453,7 +453,7 @@ if __name__ == "__main__":
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_results)
-    print(f"\n✅ Results saved to: {results_file}")
+    print(f"\nResults saved to: {results_file}")
 
     print("\n" + "="*60)
     print("SUMMARY — avg latency (ms) per engine per tier")

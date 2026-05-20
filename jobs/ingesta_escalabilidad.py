@@ -1,42 +1,17 @@
 import os
+import csv
+from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_timestamp
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, DoubleType
 )
+# PONER ESTO (arriba, junto a tus otros imports como 'import csv'):
+from spark.spark_utils import get_spark_session
 
-MINIO_USER     = os.environ.get("MINIO_USER", "admin")
-MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
-MINIO_ENDPOINT = "http://minio:9000"
+# Y donde arrancabas Spark, pones simplemente:
+spark = get_spark_session("Ingesta_Escalabilidad")
 CSV_PATH       = "/home/iceberg/jobs/PlayerStatistics.csv"
-
-paquetes = (
-    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
-    "org.apache.hadoop:hadoop-aws:3.3.4,"
-    "org.apache.iceberg:iceberg-aws-bundle:1.5.0"
-)
-
-spark = SparkSession.builder \
-    .appName("Ingesta_Escalabilidad") \
-    .config("spark.jars.packages", paquetes) \
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-    .config("spark.sql.catalog.iceberg.type", "rest") \
-    .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-    .config("spark.sql.catalog.iceberg.s3.endpoint", MINIO_ENDPOINT) \
-    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-    .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
-    .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
-    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-    .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-    .getOrCreate()
-
-spark.sparkContext.setLogLevel("WARN")
 
 # ─── Load full CSV ─────────────────────────────────────────────────────────────
 
@@ -78,17 +53,44 @@ df = df_raw.select(
 total = df.count()
 print(f"Total rows loaded: {total:,}")
 
-# Document null rates for thesis data quality section
+# ─── Document null rates ─────────────────────────────────────────────────────
+# 'rebounds_total' es un campo calculado a partir de reboundsDefensive + reboundsOffensive.
+# No existe con ese nombre en el esquema original de Iceberg, se usa solo para el análisis.
 print("\nNull rate per column (data quality report):")
-for c in ["points", "assists", "rebounds_total", "gameType", "win", "numMinutes"]:
-    if c == "rebounds_total":
+null_report = []
+columns_to_check = [
+    ("points", "points"),
+    ("assists", "assists"),
+    ("rebounds_total", "reboundsDefensive / reboundsOffensive (calculated)"),
+    ("gameType", "gameType"),
+    ("win", "win"),
+    ("numMinutes", "numMinutes"),
+]
+
+for col_alias, col_desc in columns_to_check:
+    if col_alias == "rebounds_total":
         null_count = df.filter(
             col("reboundsDefensive").isNull() & col("reboundsOffensive").isNull()
         ).count()
     else:
-        null_count = df.filter(col(c).isNull()).count()
+        null_count = df.filter(col(col_alias).isNull()).count()
     pct = round(null_count / total * 100, 2)
-    print(f"{c}: {null_count:,} nulls ({pct}%)")
+    print(f"{col_alias}: {null_count:,} nulls ({pct}%)")
+    null_report.append({
+        "column": col_alias,
+        "description": col_desc,
+        "null_count": null_count,
+        "null_percentage": pct
+    })
+
+# Exportar el informe de nulos a CSV
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+null_report_file = f"/home/iceberg/jobs/null_rates_{timestamp}.csv"
+with open(null_report_file, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=["column", "description", "null_count", "null_percentage"])
+    writer.writeheader()
+    writer.writerows(null_report)
+print(f"\nNull rate report saved to: {null_report_file}")
 
 # ─── Tier 2: ~500k rows (2015-16 season onwards) ──────────────────────────────
 
@@ -111,10 +113,11 @@ print(f"players_500k created: {count_500k:,} rows")
 # ─── Tier 3: Full dataset (1947-present) ──────────────────────────────────────
 
 print("\nCreating players_full (full 1947-present dataset)...")
+# Cambio de months a years para evitar miles de archivos minúsculos
 df.writeTo("iceberg.processed.players_full") \
     .using("iceberg") \
     .tableProperty("write.format.default", "parquet") \
-    .option("write.partitioning", "months(gamedatetimeest)") \
+    .option("write.partitioning", "years(gamedatetimeest)") \
     .option("write.sort.order", "playerteamName ASC, gameDateTimeEst DESC, personId ASC") \
     .createOrReplace()
 

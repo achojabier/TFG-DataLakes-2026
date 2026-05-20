@@ -2,30 +2,9 @@ import os
 
 from pyspark.sql import SparkSession
 
-MINIO_USER     = os.environ.get("MINIO_USER", "admin")
-MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
-MINIO_ENDPOINT = "http://minio:9000"
+from spark_utils import get_spark_session
 
-spark = SparkSession.builder \
-    .appName("init_processed_tables") \
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-    .config("spark.sql.catalog.iceberg.type", "rest") \
-    .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-    .config("spark.sql.catalog.iceberg.s3.endpoint", MINIO_ENDPOINT) \
-    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-    .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
-    .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
-    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-    .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-    .getOrCreate()
-
-spark.sparkContext.setLogLevel("WARN")
+spark = get_spark_session("Init_Processed_Tables")
 
 print("Limpiando tablas antiguas para aplicar el nuevo esquema...")
 spark.sql("DROP TABLE IF EXISTS iceberg.processed.players_eoinamoore")
@@ -60,7 +39,8 @@ spark.sql("""
         foulsPersonal           INT,
         turnovers               INT,
         plusMinus               INT,
-        gamedatetimeest         TIMESTAMP
+        gamedatetimeest         TIMESTAMP,
+        rating                  DOUBLE
     )
     USING iceberg
     TBLPROPERTIES (

@@ -63,9 +63,33 @@ WHEN MATCHED THEN
         foulsPersonal = source.foulsPersonal,
         turnovers = source.turnovers,
         plusMinus = source.plusMinus,
-        gamedatetimeest = source.gamedatetimeest
+        gamedatetimeest = source.gamedatetimeest,
+        rating = least(greatest(
+            50.0 + (
+                (source.points 
+                + 0.4 * source.fieldGoalsMade 
+                - 0.7 * source.fieldGoalsAttempted 
+                - 0.4 * (source.freeThrowsAttempted - source.freeThrowsMade) 
+                + 0.7 * source.reboundsOffensive 
+                + 0.3 * source.reboundsDefensive 
+                + source.steals 
+                + 0.7 * source.assists 
+                + 0.7 * source.blocks 
+                - 0.4 * source.foulsPersonal 
+                - source.turnovers
+                + 0.15 * source.plusMinus) * 1.5
+            )
+        , 0.0), 100.0)
 WHEN NOT MATCHED THEN
-    INSERT VALUES (
+    WHEN NOT MATCHED THEN
+    INSERT (
+        firstName, lastName, personId, gameId, playerteamName, opponentteamName, 
+        gameType, gameLabel, win, home, numMinutes, points, assists, blocks, steals, 
+        fieldGoalsAttempted, fieldGoalsMade, threePointersAttempted, threePointersMade, 
+        freeThrowsAttempted, freeThrowsMade, reboundsDefensive, reboundsOffensive, 
+        foulsPersonal, turnovers, plusMinus, gamedatetimeest, rating
+    )
+    VALUES (
         source.firstName, source.lastName, source.personid, source.gameid, 
         source.playerteamName, source.opponentteamName, source.gameType, 
         source.gameLabel, source.win, source.home, source.numMinutes, 
@@ -75,16 +99,26 @@ WHEN NOT MATCHED THEN
         source.freeThrowsAttempted, source.freeThrowsMade, 
         source.reboundsDefensive, source.reboundsOffensive, 
         source.foulsPersonal, source.turnovers, source.plusMinus, 
-        source.gamedatetimeest
+        source.gamedatetimeest,
+        least(greatest(
+            50.0 + (
+                (source.points 
+                + 0.4 * source.fieldGoalsMade 
+                - 0.7 * source.fieldGoalsAttempted 
+                - 0.4 * (source.freeThrowsAttempted - source.freeThrowsMade) 
+                + 0.7 * source.reboundsOffensive 
+                + 0.3 * source.reboundsDefensive 
+                + source.steals 
+                + 0.7 * source.assists 
+                + 0.7 * source.blocks 
+                - 0.4 * source.foulsPersonal 
+                - source.turnovers
+                + 0.15 * source.plusMinus) * 1.5
+            )
+        , 0.0), 100.0)
     )
 """
 def verificar_datos_landing(**context):
-    """
-    FIX: Added a pre-merge sanity check.
-    Queries the landing table to confirm new rows exist before running the
-    expensive MERGE. If landing is empty or unchanged, raises an error so the
-    DAG fails fast instead of running a no-op MERGE.
-    """
     
  
     execution_date = context['execution_date']
@@ -127,10 +161,16 @@ with DAG(
         execution_timeout=timedelta(minutes=15)
     )
 
+    limpiar_landing = TrinoOperator(
+        task_id='truncate_landing',
+        trino_conn_id='trino_default',
+        sql="DELETE FROM iceberg.landing.players_eoinamoore"
+    )
+
     disparar_oro = TriggerDagRunOperator(
     task_id='trigger_capa_oro',
     trigger_dag_id='dag_nba_oro', # El nombre exacto de tu otro DAG
     wait_for_completion=False
     )
 
-    verificar_landing >> [ejecutar_merge_trino, procesar_salarios] >> disparar_oro
+    verificar_landing >> [ejecutar_merge_trino, procesar_salarios] >> limpiar_landing >> disparar_oro

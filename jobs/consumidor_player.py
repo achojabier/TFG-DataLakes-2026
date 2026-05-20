@@ -3,43 +3,18 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
+from spark.spark_utils import get_spark_session
 
 def iniciar_consumidor_player():
     print("Arrancando Consumidor Spark para los datos de jugadores...")
     
-    paquetes = (
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
-        "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
-        "org.apache.hadoop:hadoop-aws:3.3.4,"
-        "org.apache.iceberg:iceberg-aws-bundle:1.5.0"
-    )
-
-    spark = SparkSession.builder \
-        .appName("Consumidor_player") \
-        .config("spark.jars.packages", paquetes) \
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-        .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-        .config("spark.sql.catalog.iceberg.type", "rest") \
-        .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-        .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-        .config("spark.sql.catalog.iceberg.s3.endpoint", "http://minio:9000") \
-        .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", os.environ.get("MINIO_USER")) \
-        .config("spark.hadoop.fs.s3a.secret.key", os.environ.get("MINIO_PASSWORD")) \
-        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-        .getOrCreate()
-    
-    spark.sparkContext.setLogLevel("WARN")
+    spark = get_spark_session("Consumidor_Players")
 
     esquema = StructType([
         StructField("firstName", StringType(), True),
         StructField("lastName", StringType(), True),
-        StructField("personId", StringType(), True),
-        StructField("gameId", StringType(), True),
+        StructField("personId", StringType(), False),
+        StructField("gameId", StringType(), False),
         StructField("playerteamName", StringType(), True),
         StructField("opponentteamName", StringType(), True),
         StructField("gameType", StringType(), True),
@@ -62,7 +37,7 @@ def iniciar_consumidor_player():
         StructField("foulsPersonal", IntegerType(), True),
         StructField("turnovers", IntegerType(), True),
         StructField("plusMinus", IntegerType(), True),
-        StructField("gameDateTimeEst", TimestampType(), True)
+        StructField("gameDateTimeEst", TimestampType(), False)
     ])
 
     print("Inicializando tabla Iceberg 'nba.players_eoinamoore'...")
@@ -71,8 +46,8 @@ def iniciar_consumidor_player():
     CREATE TABLE IF NOT EXISTS iceberg.landing.players_eoinamoore (
         firstName STRING,
         lastName STRING,
-        personId STRING,
-        gameId STRING,
+        personId STRING NOT NULL,
+        gameId STRING NOT NULL,
         playerteamName STRING,
         opponentteamName STRING,
         gameType STRING,
@@ -95,11 +70,10 @@ def iniciar_consumidor_player():
         foulsPersonal INT,
         turnovers INT,
         plusMinus INT,
-        gameDateTimeEst TIMESTAMP
+        gameDateTimeEst TIMESTAMP NOT NULL
     ) USING iceberg
     """)
 
-    spark.createDataFrame([], esquema).writeTo("iceberg.landing.players_eoinamoore").append()
 
     print("Escuchando canal 'nba_players_eoinamoore' en Kafka...")
     df_kafka = spark.readStream \
@@ -110,8 +84,10 @@ def iniciar_consumidor_player():
         .load()
 
     df_tiros = df_kafka.selectExpr("CAST(value AS STRING) as json_payload") \
-        .select(from_json(col("json_payload"), esquema, {"node":"PERMISSIVE"}).alias("data")) \
-        .select("data.*")
+        .select(from_json(col("json_payload"), esquema, {"mode":"PERMISSIVE"}).alias("data")) \
+        .select("data.*") \
+        .dropna(subset=["personId", "gameId", "gameDateTimeEst"])
+    
     
     print("💾 Guardando micro-lotes en MinIO/Iceberg cada 5 segundos...")
     query = df_tiros.writeStream \
@@ -121,8 +97,17 @@ def iniciar_consumidor_player():
         .option("path", "iceberg.landing.players_eoinamoore") \
         .option("checkpointLocation", "s3a://landing/checkpoints/players_eoinamoore") \
         .start()
+    
+    query_cold_storage = df_kafka.selectExpr("CAST(value AS STRING) as raw_json") \
+        .writeStream \
+        .format("text") \
+        .outputMode("append") \
+        .trigger(processingTime="5 seconds") \
+        .option("path", "s3a://raw-archive/players_eoinamoore/") \
+        .option("checkpointLocation", "s3a://landing/checkpoints/players_archive_raw") \
+        .start()
 
-    query.awaitTermination()
+    spark.streams.awaitAnyTermination()
 
 if __name__ == "__main__":
     iniciar_consumidor_player()
