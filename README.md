@@ -21,13 +21,20 @@ El proyecto implementa una arquitectura Medallón (Bronce, Plata, Oro) completam
 
 - **Almacenamiento & Formato:** MinIO (Object Storage S3) + Apache Iceberg.
 - **Ingesta (Capa Bronce):** Apache Kafka (registro de partidos) y carga de ficheros estáticos CSV (salarios).
-- **Procesamiento ETL (Capa Plata):** Apache Spark (PySpark) para limpieza y *Fuzzy Matching*.
-- **Datamarts (Capa Oro) y Orquestación:** Apache Airflow coordina la ejecución de modelos analíticos sobre Trino (Motor SQL).
+- **Procesamiento ETL (Capa Plata):** Apache Spark (PySpark) ejecuta el procesamiento pesado y las operaciones DML complejas (limpieza y *Fuzzy Matching*).
+- **Datamarts (Capa Oro) y Orquestación:** Apache Airflow coordina la ejecución sobre Trino (Motor SQL), quien gestiona el esquema (DDL) y las agregaciones analíticas ágiles (diseño multimotor).
 - **Visualización (BI):** Metabase.
 
 ---
 
-## 2. Despliegue de la Infraestructura (Quick Start)
+## 2. Estructura del Repositorio
+
+- `dags/` &rarr; Definición de los flujos de orquestación para Apache Airflow.
+- `jobs/` &rarr; Scripts de PySpark, consultas SQL y ficheros CSV estáticos.
+- `infrastructure/` &rarr; Archivos de configuración, catálogos y Dockerfiles.
+- `docker-compose.yml` &rarr; Archivo principal para desplegar la infraestructura.
+
+## 3. Despliegue de la Infraestructura (Quick Start)
 
 Los siguientes comandos se pueden ejecutar directamente desde la terminal de VS Code (PowerShell o CMD) en Windows, Mac o Linux.
 
@@ -45,7 +52,7 @@ docker-compose up -d
 
 ---
 
-## 3. Ejecución del Pipeline de Datos
+## 4. Ejecución del Pipeline de Datos
 
 Para procesar la información, debes seguir este orden estricto de ejecución desde tu terminal de VS Code:
 
@@ -70,21 +77,21 @@ docker exec -it airflow-scheduler python /opt/airflow/jobs/spark/init_gold_table
 
 ---
 
-## 4. Configuración de Visualización (Metabase)
+## 5. Configuración de Visualización (Metabase)
 
 Dado que Metabase arranca como un lienzo en blanco, sigue estos pasos para conectar los datos y construir los gráficos:
 
-### 4.1. Conexión de la Base de Datos
+### 5.1. Conexión de la Base de Datos
 1. Accede a `http://localhost:3000` y completa la configuración inicial.
 2. Añade una nueva base de datos con los siguientes parámetros de conexión a **Trino**:
    * **Tipo de base de datos:** Presto / Trino
-   * **Host:** `trino`
+   * **Host:** `trino` *(Usa `localhost` si intentas conectar un cliente SQL externo desde tu máquina).*
    * **Puerto:** `8080`
    * **Catálogo:** `iceberg`
    * **Esquema:** `warehouse` (o el esquema donde residan tus tablas de la capa Oro)
    * **Usuario:** `admin` (sin contraseña)
 
-### 4.2. Creación de Dashboards
+### 5.2. Creación de Dashboards
 Una vez conectado, utiliza el editor SQL de Metabase para introducir las consultas de negocio desarrolladas en el proyecto y generar las visualizaciones:
 * **Gráfico de Dispersión (ROI):** Cruza el salario de los jugadores con su rendimiento global para analizar la eficiencia económica.
 * **Gráfico de Barras (Load Management):** Agrupa por la situación de descanso (`rest_situation`) y calcula la media de valoración (`avg_rating`) para exponer el impacto de la fatiga en escenarios *Back-to-back*.
