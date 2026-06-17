@@ -1,5 +1,6 @@
 import os
 from difflib import SequenceMatcher
+from rapidfuzz import fuzz
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, trim, split, regexp_replace
@@ -42,7 +43,7 @@ pdf_salaries["lastname"]  = pdf_salaries["fullname"].str.replace(r"^\S+\s+", "",
 print("Leyendo registro de jugadores desde landing...")
 pdf_registry = spark.sql("""
     SELECT DISTINCT personid, firstname, lastname
-    FROM iceberg.landing.players_eoinamoore
+    FROM iceberg.processed.players_eoinamoore
 """).toPandas()
 
 pdf_registry["fullname_norm"] = (
@@ -57,11 +58,15 @@ def best_match(fullname, registry_df):
     best_id = None
     best_name = None
     for _, row in registry_df.iterrows():
-        score = SequenceMatcher(None, name_norm, row["fullname_norm"]).ratio()
+        score = fuzz.ratio(name_norm, row["fullname_norm"]) / 100.0
         if score > best_score:
             best_score = score
             best_id = row["personid"]
             best_name = row["fullname_norm"]
+        
+        if best_score == 1.0:
+            break
+            
     if best_score >= FUZZY_THRESHOLD:
         return best_id, best_name, best_score
     return None, None, best_score
@@ -85,7 +90,7 @@ for _, row in pdf_salaries.iterrows():
     else:
         unmatched += 1
 
-coverage_pct = round(matched / len(pdf_salaries) * 100, 1)
+coverage_pct = round(matched / len(pdf_salaries) * 100, 1) if len(pdf_salaries) > 0 else 0
 print(f"Matched   : {matched} / {len(pdf_salaries)} ({coverage_pct}%)")
 print(f"Unmatched : {unmatched} (G-League/two-way players)")
 
@@ -94,7 +99,6 @@ if low_confidence:
     for salary_name, registry_name, score in low_confidence[:10]:
         print(f"  '{salary_name}' → '{registry_name}' (score={score})")
 
-# EL ESQUEMA AHORA COINCIDE CON LA TABLA ICEBERG
 schema = StructType([
     StructField("personid",   LongType(), True),
     StructField("player_name", StringType(), True),
@@ -105,11 +109,11 @@ schema = StructType([
 
 df_final = spark.createDataFrame(results, schema=schema)
 
-print("Aplicando operación UPSERT (MERGE) en iceberg.processed.dim_salaries...")
+df_final = df_final.dropDuplicates(["personid", "season"])
 
 df_final.createOrReplaceTempView("salarios_nuevos")
 
-# 2. Hacemos la magia de Iceberg: cruzamos por ID y Temporada
+# Cruzamos por ID y Temporada
 spark.sql("""
     MERGE INTO iceberg.processed.dim_salaries t
     USING salarios_nuevos s

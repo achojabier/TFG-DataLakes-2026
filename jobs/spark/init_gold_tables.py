@@ -8,24 +8,37 @@ print("Limpiando esquemas antiguos de Oro...")
 spark.sql("DROP TABLE IF EXISTS iceberg.warehouse.game_logs")
 spark.sql("DROP TABLE IF EXISTS iceberg.warehouse.player_season_stats")
 
-# --- game_logs (Molde de 15 columnas exactas) ---
 spark.sql("""
     CREATE TABLE iceberg.warehouse.game_logs (
         personid BIGINT,
         player_name STRING,
         gameid BIGINT,
         playerteamname STRING,
+        opponentteamname STRING,    
+        home BOOLEAN,               
+        win BOOLEAN,                
+        gametype STRING,            
         points INT,
         assists INT,
         reboundsoffensive INT,
         reboundsdefensive INT,
+        totalrebounds INT,
         steals INT,
         blocks INT,
         turnovers INT,
+        fieldgoalsmade INT,         
+        fieldgoalsattempted INT,    
+        threepointersmade INT,      
+        threepointersattempted INT, 
+        freethrowsmade INT,         
+        freethrowsattempted INT,    
+        foulspersonal INT,          
+        plusminus DOUBLE,           
         numminutes DOUBLE,
         game_date DATE,
         prev_game_date DATE,
-        is_back_to_back BOOLEAN
+        is_back_to_back BOOLEAN,
+        rating DOUBLE
     )
     USING iceberg
     TBLPROPERTIES (
@@ -36,7 +49,6 @@ spark.sql("""
     PARTITIONED BY (playerteamname)
 """)
 
-# --- player_season_stats (Molde de 15 columnas exactas) ---
 spark.sql("""
     CREATE TABLE iceberg.warehouse.player_season_stats (
         personid BIGINT,
@@ -53,7 +65,8 @@ spark.sql("""
         total_steals BIGINT,
         total_blocks BIGINT,
         total_turnovers BIGINT,
-        salary_usd BIGINT
+        salary_usd BIGINT,
+        avg_rating DOUBLE
     )
     USING iceberg
     TBLPROPERTIES (

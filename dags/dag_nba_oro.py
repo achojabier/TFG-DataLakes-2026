@@ -9,22 +9,36 @@ default_args = {
 }
 
 sql_game_logs = """
-CREATE OR REPLACE TABLE iceberg.warehouse.game_logs AS
+INSERT INTO iceberg.warehouse.game_logs
 WITH player_games AS (
     SELECT 
         personid,
         firstName || ' ' || lastName AS player_name,
         gameid,
         playerteamName,
+        opponentteamName,
+        home,
+        win,
+        gameType,
         points,
         assists,
         reboundsOffensive,
         reboundsDefensive,
+        (reboundsOffensive + reboundsDefensive) AS totalrebounds,
         steals,
         blocks,
         turnovers,
-        numMinutes,
-        CAST(gamedatetimeest AS DATE) as game_date
+        fieldGoalsMade,
+        fieldGoalsAttempted,
+        threePointersMade,
+        threePointersAttempted,
+        freeThrowsMade,
+        freeThrowsAttempted,
+        foulsPersonal,
+        CAST(plusMinus AS DOUBLE) AS plusminus,
+        CAST(numMinutes AS DOUBLE) AS numMinutes,
+        CAST(gamedatetimeest AS DATE) AS game_date,
+        rating
     FROM iceberg.processed.players_eoinamoore
     WHERE numMinutes > 0
 ),
@@ -39,23 +53,36 @@ SELECT
     player_name,
     gameid,
     playerteamName,
+    opponentteamName,
+    home,
+    win,
+    gameType,
     points,
     assists,
     reboundsOffensive,
     reboundsDefensive,
+    totalrebounds,
     steals,
     blocks,
     turnovers,
-    CAST(numMinutes AS DOUBLE) as numMinutes,
-    rating,
+    fieldGoalsMade,
+    fieldGoalsAttempted,
+    threePointersMade,
+    threePointersAttempted,
+    freeThrowsMade,
+    freeThrowsAttempted,
+    foulsPersonal,
+    plusminus,
+    numMinutes,
     game_date,
     prev_game_date,
-    CASE WHEN date_diff('day', prev_game_date, game_date) = 1 THEN true ELSE false END AS is_back_to_back
+    CASE WHEN date_diff('day', prev_game_date, game_date) = 1 THEN true ELSE false END AS is_back_to_back,
+    rating
 FROM games_with_lag
 """
 
 sql_season_stats = """
-CREATE OR REPLACE TABLE iceberg.warehouse.player_season_stats AS
+INSERT INTO iceberg.warehouse.player_season_stats
 WITH base_stats AS (
     SELECT 
         p.personid,
@@ -72,7 +99,8 @@ WITH base_stats AS (
         (p.reboundsOffensive + p.reboundsDefensive) AS total_rebounds,
         p.steals,
         p.blocks,
-        p.turnovers
+        p.turnovers,
+        p.rating
     FROM iceberg.processed.players_eoinamoore p
     WHERE p.numMinutes > 0
 )
@@ -91,8 +119,9 @@ SELECT
     SUM(b.steals) AS total_steals,
     SUM(b.blocks) AS total_blocks,
     SUM(b.turnovers) AS total_turnovers,
-    ROUND(AVG(CAST(b.rating AS DOUBLE)), 1) AS avg_rating,
-    COALESCE(MAX(s_limpio.salary_usd), 0) AS salary_usd
+    COALESCE(MAX(s_limpio.salary_usd), 0) AS salary_usd,
+    ROUND(AVG(CAST(b.rating AS DOUBLE)), 1) AS avg_rating
+    
 FROM base_stats b
 LEFT JOIN (
     SELECT personid, MAX(salary_usd) AS salary_usd 
@@ -110,22 +139,35 @@ GROUP BY
 with DAG(
     'dag_nba_oro',
     default_args=default_args,
-    description='Data Marts de la Capa Oro (Idempotente + Full Refresh)',
+    description='Data Marts de la Capa Oro (Idempotente + Full Refresh respetando esquema)',
     schedule_interval=None, 
     catchup=False,
     tags=['nba', 'iceberg', 'gold'],
 ) as dag:
 
+    limpiar_game_logs = TrinoOperator(
+        task_id='truncate_gold_game_logs',
+        trino_conn_id='trino_default',
+        sql="DELETE FROM iceberg.warehouse.game_logs"
+    )
+
+    limpiar_season_stats = TrinoOperator(
+        task_id='truncate_gold_season_stats',
+        trino_conn_id='trino_default',
+        sql="DELETE FROM iceberg.warehouse.player_season_stats"
+    )
+
     crear_game_logs = TrinoOperator(
-        task_id='create_gold_game_logs',
+        task_id='insert_gold_game_logs',
         trino_conn_id='trino_default',
         sql=sql_game_logs
     )
 
     crear_season_stats = TrinoOperator(
-        task_id='create_gold_season_stats',
+        task_id='insert_gold_season_stats',
         trino_conn_id='trino_default',
         sql=sql_season_stats
     )
 
-    [crear_game_logs, crear_season_stats]
+    limpiar_game_logs >> crear_game_logs
+    limpiar_season_stats >> crear_season_stats

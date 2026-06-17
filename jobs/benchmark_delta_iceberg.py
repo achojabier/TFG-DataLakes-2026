@@ -10,7 +10,6 @@ from spark.spark_utils import get_spark_session
 
 N_RUNS = 3
 
-
 DELTA_BASE = "s3a://warehouse/delta"
 DELTA_TIERS = {
     "players_30k":  f"{DELTA_BASE}/players_30k",
@@ -87,11 +86,30 @@ QUERIES = [
             ORDER BY fg_pct DESC
         """,
     },
+    {
+        "id":          "Q_skip_team",
+        "description": "Data skipping — filter on one team",
+        "category":    "Scan (filtered)",
+        "sql":         """
+            SELECT COUNT(*)
+            FROM {TABLE}
+            WHERE playerteamname = 'Boston Celtics'
+        """,
+    },
+    {
+        "id":          "Q_skip_player",
+        "description": "Data skipping — filter on one player",
+        "category":    "Scan (filtered)",
+        "sql":         """
+            SELECT COUNT(*)
+            FROM {TABLE}
+            WHERE personid = 2544
+        """,
+    },
 ]
 
 
 def crear_spark():
-    
     return get_spark_session("Benchmark_Delta_Iceberg")
 
 
@@ -147,6 +165,18 @@ def benchmark_delta(spark):
             row_count = 0
             error = None
 
+            # ── Warmup (no incluido en la media) ──────────────────
+            try:
+                t0 = time.perf_counter()
+                result_warmup = spark.sql(sql)
+                rows_warmup = result_warmup.count()
+                t1 = time.perf_counter()
+                warmup_ms = round((t1 - t0) * 1000, 2)
+                print(f"[{q['id']}] Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+            except Exception as e:
+                print(f"[{q['id']}] Warmup: ERROR — {e}")
+
+            # ── Mediciones reales ─────────────────────────────────
             for run in range(N_RUNS):
                 try:
                     t0 = time.perf_counter()
@@ -202,6 +232,18 @@ def benchmark_iceberg(spark):
             row_count = 0
             error = None
 
+            # ── Warmup (no incluido en la media) ──────────────────
+            try:
+                t0 = time.perf_counter()
+                result_warmup = spark.sql(sql)
+                rows_warmup = result_warmup.count()
+                t1 = time.perf_counter()
+                warmup_ms = round((t1 - t0) * 1000, 2)
+                print(f"[{q['id']}] Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+            except Exception as e:
+                print(f"[{q['id']}] Warmup: ERROR — {e}")
+
+            # ── Mediciones reales ─────────────────────────────────
             for run in range(N_RUNS):
                 try:
                     t0 = time.perf_counter()
@@ -242,7 +284,6 @@ def comparar_storage(spark):
 
     sizes = []
 
-    
     conn = connect(host="trino", port=8080, user="admin")
     iceberg_tables = [
         ("players_30k",  "iceberg.processed", "players_eoinamoore"),
@@ -278,12 +319,10 @@ def comparar_storage(spark):
     return sizes
 
 
-
 def guardar_resultados(all_results, storage_sizes):
-    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    results_file = f"delta_vs_iceberg_{timestamp}.csv"
+    results_file = f"/home/iceberg/jobs/delta_vs_iceberg_{timestamp}.csv"
     fieldnames = ["engine", "format", "tier", "rows", "query_id", "category",
                   "description", "avg_ms", "min_ms", "max_ms", "stddev_ms",
                   "row_count", "error"]
@@ -293,7 +332,7 @@ def guardar_resultados(all_results, storage_sizes):
         writer.writerows(all_results)
     print(f"\nResultados guardados en: {results_file}")
 
-    storage_file = f"delta_storage_{timestamp}.csv"
+    storage_file = f"/home/iceberg/jobs/delta_storage_{timestamp}.csv"
     with open(storage_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["format", "tier", "size_mb"])
         writer.writeheader()

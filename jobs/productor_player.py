@@ -1,66 +1,66 @@
-from trino.dbapi import connect
 import pandas as pd
 import json
 import time
-from datetime import datetime
+import os
 from kafka import KafkaProducer
 
-def obtener_ultima_fecha_iceberg():
-    print("Consultando a Trino/Iceberg el último partido guardado...")
-    fecha_default = '2025-10-20 00:00:00'
-    try:
-        
-        conn = connect(host="trino", port=8080, user="admin")
-        cur = conn.cursor()
-        
-        
-        cur.execute("SELECT MAX(gameDateTimeEst) FROM iceberg.landing.players_eoinamoore")
-        res = cur.fetchone()
-        
-        if res and res[0]:
-            ultima_fecha = res[0]
-            print(f"Último partido en Iceberg es del: {ultima_fecha}")
-            return ultima_fecha
-            
-    except Exception as e:
-        print(f"Aviso: No se pudo consultar la tabla (quizás aún no existe o está vacía).")
-        print(f"Detalle del error: {e}")
-        print(f"Usando fecha por defecto: {fecha_default} (se cargarán todos los partidos)")
-    return fecha_default
+# Ruta al archivo de control de estado
+ARCHIVO_ESTADO = '/opt/airflow/jobs/watermark.json'
+FECHA_DEFAULT = '2026-05-01'
+
+def obtener_ultimo_estado():
+    print("Comprobando archivo de estado (Watermark)...")
+    if os.path.exists(ARCHIVO_ESTADO):
+        try:
+            with open(ARCHIVO_ESTADO, 'r') as f:
+                datos = json.load(f)
+                ultima_fecha = datos.get('ultima_fecha', FECHA_DEFAULT)
+                print(f"Último partido procesado fue el: {ultima_fecha}")
+                return ultima_fecha
+        except Exception as e:
+            print(f"Error leyendo el estado: {e}. Se usará la fecha por defecto.")
+    else:
+        print("No hay estado previo. Iniciando carga histórica desde cero.")
+    
+    return FECHA_DEFAULT
+
+def guardar_nuevo_estado(nueva_fecha):
+    with open(ARCHIVO_ESTADO, 'w') as f:
+        json.dump({'ultima_fecha': nueva_fecha}, f)
+    print(f"Estado actualizado con éxito. Nuevo Watermark: {nueva_fecha}")
 
 def simulador_partido_vivo():
-    print("Iniciando ingesta de box scores NBA")
-
+    ultima_fecha_procesada = obtener_ultimo_estado()
+    
     productor = KafkaProducer(
         bootstrap_servers=['kafka:9092'],
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
-    # Obtener la última fecha de partido almacenada en Iceberg para no reingestar datos antiguos (duplicados)
-    fecha = obtener_ultima_fecha_iceberg()
-    print("Cargando datos...")
+    
+    print("Cargando datos del CSV...")
     df = pd.read_csv('/opt/airflow/jobs/PlayerStatistics.csv')
+    df['fecha_real'] = pd.to_datetime(df['gameDateTimeEst'], utc=True)
+    
+    # IDEMPOTENCIA BASADA EN ESTADO: Filtramos lo mayor a la última fecha
+    df_filtrado = df[df['fecha_real'].dt.strftime('%Y-%m-%d') > ultima_fecha_procesada].copy()
 
-    df['fecha_real'] = pd.to_datetime(df['gameDateTimeEst'])
-    df_filtrado = df[df['fecha_real'] > pd.to_datetime(fecha)].copy()
+    if df_filtrado.empty:
+        print(f"El sistema está al día. No hay partidos nuevos después del {ultima_fecha_procesada}.")
+        return
 
     df_filtrado = df_filtrado.sort_values('fecha_real', ascending=True)
     df_filtrado = df_filtrado.fillna(0)
 
-    print("Iniciando transmisión de box scores...\n")
+    print(f"Se han encontrado {len(df_filtrado)} eventos nuevos. Iniciando transmisión...\n")
+
+    # Guardamos cuál es la fecha máxima de este nuevo bloque para apuntarla al final
+    nueva_fecha_maxima = df_filtrado['fecha_real'].max().strftime('%Y-%m-%d')
 
     for indice, fila in df_filtrado.iterrows():
         box_score = fila.to_dict()
 
-        # Explicitly coerce nulls to correct default types
-        int_fields = [
-            'win', 'home', 'numMinutes', 'points', 'assists', 'blocks', 'steals',
-            'fieldGoalsAttempted', 'fieldGoalsMade', 'threePointersAttempted',
-            'threePointersMade', 'freeThrowsAttempted', 'freeThrowsMade',
-            'reboundsDefensive', 'reboundsOffensive', 'turnovers', 'plusMinus', 'foulsPersonal'
-        ]
-        str_fields = ['personId', 'gameId', 'firstName', 'lastName', 
-                    'playerteamName', 'opponentteamName', 'gameType', 
-                    'gameLabel', 'gameDateTimeEst']
+        int_fields = ['win', 'home', 'numMinutes', 'points', 'assists', 'blocks', 'steals', 'fieldGoalsAttempted', 'fieldGoalsMade', 'threePointersAttempted', 'threePointersMade', 'freeThrowsAttempted', 'freeThrowsMade', 'reboundsDefensive', 'reboundsOffensive', 'turnovers', 'plusMinus', 'foulsPersonal']
+        str_fields = ['personId', 'gameId', 'firstName', 'lastName', 'playerteamName', 'opponentteamName', 'gameType', 'gameLabel', 'gameDateTimeEst']
 
         for field in int_fields:
             val = box_score.get(field)
@@ -70,23 +70,25 @@ def simulador_partido_vivo():
             val = box_score.get(field)
             box_score[field] = str(val) if val is not None and not (isinstance(val, float) and pd.isna(val)) else ""
 
-        # Clean float-formatted IDs like "204001.0" → "204001"
         for field in ['personId', 'gameId']:
             val = box_score.get(field)
             if val is not None:
-                try:
-                    box_score[field] = str(int(float(val)))
-                except (ValueError, TypeError):
-                    box_score[field] = str(val) if val else ""
+                try: box_score[field] = str(int(float(val)))
+                except (ValueError, TypeError): box_score[field] = str(val) if val else ""
 
         if 'fecha_real' in box_score: del box_score['fecha_real']
 
         productor.send('nba_players_eoinamoore', box_score)
-        productor.flush()
+        print(f"Enviando partido del {box_score['gameDateTimeEst']} -> {box_score['firstName']} {box_score['lastName']}")
+        
+        # Un pequeño delay para no ahogar a Kafka si hay miles de registros de golpe
+        time.sleep(0.01) 
 
-        print(f"[{indice}] Enviando box score de {box_score['firstName']} {box_score['lastName']} del equipo {box_score['playerteamName']} contra {box_score['opponentteamName']} el día {box_score['gameDateTimeEst']}, partido de {box_score['gameType']}, {box_score['gameLabel']}...")
-
-        time.sleep(0.05)
+    productor.flush()
+    
+    # Solo cuando todo se ha enviado con éxito a Kafka, actualizamos la "libreta"
+    guardar_nuevo_estado(nueva_fecha_maxima)
+    print("Ingesta finalizada con éxito.")
 
 if __name__ == "__main__":
     simulador_partido_vivo()

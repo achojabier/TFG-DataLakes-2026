@@ -71,36 +71,7 @@ QUERIES_TRINO = [
         """,
     },
     {
-        "id": "Q5_join_schedule",
-        "description": "JOIN — box scores joined with schedule",
-        "category": "Join",
-        "sql": """
-            SELECT p.firstname, p.lastname, p.points, p.assists,
-                   s.arenaname, s.arenacity, s.gamelabel
-            FROM iceberg.processed.players_eoinamoore p
-            JOIN iceberg.processed.dim_schedule s
-              ON CAST(p.gameid AS INTEGER) = s.gameid
-            WHERE p.points > 20
-            ORDER BY p.points DESC
-            LIMIT 500
-        """,
-    },
-    {
-        "id": "Q6_join_advanced",
-        "description": "JOIN — box scores joined with advanced stats",
-        "category": "Join",
-        "sql": """
-            SELECT p.firstname, p.lastname, p.points,
-                   a.tspct, a.pie, a.netrating, a.usgpct
-            FROM iceberg.processed.players_eoinamoore p
-            JOIN iceberg.processed.dim_advanced_stats a
-              ON CAST(p.personid AS INTEGER) = a.personid
-             AND p.gameid = CAST(a.gameid AS VARCHAR)
-            LIMIT 1000
-        """,
-    },
-    {
-        "id": "Q7_multi_agg",
+        "id": "Q5_multi_agg",
         "description": "Multi-column aggregation — shooting efficiency per team",
         "category": "Aggregation",
         "sql": """
@@ -118,7 +89,7 @@ QUERIES_TRINO = [
         """,
     },
     {
-        "id": "Q8_rank",
+        "id": "Q6_rank",
         "description": "RANK window — top scorer per team",
         "category": "Window",
         "sql": """
@@ -137,53 +108,12 @@ QUERIES_TRINO = [
             ORDER BY total_points DESC
         """,
     },
-    {
-        "id": "Q9_advanced_filter",
-        "description": "Advanced stats filter — high efficiency players",
-        "category": "Filter",
-        "sql": """
-            SELECT playername, teamname, tspct, pie, netrating,
-                   offrating, defrating, usgpct
-            FROM iceberg.processed.dim_advanced_stats
-            WHERE tspct > 0.6
-              AND usgpct > 0.25
-              AND pie > 0.15
-            ORDER BY pie DESC
-            LIMIT 100
-        """,
-    },
-    {
-        "id": "Q10_three_way_join",
-        "description": "Three-table join — box scores + advanced + schedule",
-        "category": "Join",
-        "sql": """
-            SELECT p.firstname, p.lastname,
-                   p.points, p.assists,
-                   a.tspct, a.pie,
-                   s.arenaname, s.arenacity
-            FROM iceberg.processed.players_eoinamoore p
-            JOIN iceberg.processed.dim_advanced_stats a
-              ON CAST(p.personid AS INTEGER) = a.personid
-             AND p.gameid = CAST(a.gameid AS VARCHAR)
-            JOIN iceberg.processed.dim_schedule s
-              ON CAST(p.gameid AS INTEGER) = s.gameid
-            WHERE p.points >= 25
-            ORDER BY p.points DESC
-            LIMIT 200
-        """,
-    },
 ]
 
+# Ya no necesitamos adaptación para Q6/Q10, pero mantenemos el bucle por si acaso
 QUERIES_SPARK = []
 for q in QUERIES_TRINO:
-    spark_q = dict(q)
-    if q["id"] in ("Q6_join_advanced", "Q10_three_way_join"):
-        spark_q["sql"] = q["sql"].replace(
-            "CAST(a.gameid AS VARCHAR)",
-            "CAST(a.gameid AS STRING)"
-        )
-    QUERIES_SPARK.append(spark_q)
-
+    QUERIES_SPARK.append(dict(q))
 
 
 def run_trino_benchmarks():
@@ -251,14 +181,13 @@ def run_trino_benchmarks():
     return results
 
 
-
 def run_spark_benchmarks():
     from pyspark.sql import SparkSession
     from spark.spark_utils import get_spark_session
     print("\n" + "="*60)
     print("SPARK SQL BENCHMARK")
     print("="*60)
-    
+
     spark = get_spark_session("Benchmark_Spark_SQL")
 
     results = []
@@ -286,8 +215,8 @@ def run_spark_benchmarks():
             try:
                 t0 = time.perf_counter()
                 df = spark.sql(q["sql"])
-                rows = df.collect()   # en vez de df.count()
-                row_count = len(rows)  # force full execution
+                rows = df.collect()
+                row_count = len(rows)
                 t1 = time.perf_counter()
                 elapsed = round((t1 - t0) * 1000, 2)
                 times.append(elapsed)
@@ -316,13 +245,13 @@ def run_spark_benchmarks():
     spark.stop()
     return results
 
+
 def run_pandas_benchmarks():
     print("\n" + "="*60)
     print("PANDAS / CSV BASELINE BENCHMARK")
     print("="*60)
 
     CSV_PLAYERS  = "/home/iceberg/jobs/PlayerStatistics.csv"
-    CSV_ADVANCED = "/home/iceberg/jobs/PlayerStatisticsAdvanced.csv"
     CSV_SCHEDULE = "/home/iceberg/jobs/LeagueSchedule25_26.csv"
 
     results = []
@@ -331,7 +260,6 @@ def run_pandas_benchmarks():
     try:
         t0 = time.perf_counter()
         df_players  = pd.read_csv(CSV_PLAYERS,  low_memory=False)
-        df_advanced = pd.read_csv(CSV_ADVANCED, low_memory=False)
         df_schedule = pd.read_csv(CSV_SCHEDULE, low_memory=False)
         load_time = round((time.perf_counter() - t0) * 1000, 2)
 
@@ -343,7 +271,7 @@ def run_pandas_benchmarks():
 
         print(f"players (filtered to Iceberg range): {len(df_players)} rows")
         print(f"CSV load time: {load_time} ms")
-        print(f"players: {len(df_players)} rows | advanced: {len(df_advanced)} rows | schedule: {len(df_schedule)} rows")
+        print(f"players: {len(df_players)} rows | schedule: {len(df_schedule)} rows")
     except Exception as e:
         print(f"ERROR loading CSVs: {e}")
         return results
@@ -384,23 +312,7 @@ def run_pandas_benchmarks():
             ).head(1000),
         },
         {
-            "id": "Q5_join_schedule",
-            "description": "JOIN — box scores joined with schedule",
-            "category": "Join",
-            "fn": lambda: df_players[df_players["points"] > 20].merge(
-                df_schedule, left_on="gameId", right_on="gameId", how="inner"
-            ).sort_values("points", ascending=False).head(500),
-        },
-        {
-            "id": "Q6_join_advanced",
-            "description": "JOIN — box scores joined with advanced stats",
-            "category": "Join",
-            "fn": lambda: df_players.merge(
-                df_advanced, on=["personId", "gameId"], how="inner"
-            ).head(1000),
-        },
-        {
-            "id": "Q7_multi_agg",
+            "id": "Q5_multi_agg",
             "description": "Multi-column aggregation — shooting efficiency",
             "category": "Aggregation",
             "fn": lambda: df_players.groupby("playerteamName").apply(
@@ -416,7 +328,7 @@ def run_pandas_benchmarks():
             ).sort_values("fg_pct", ascending=False),
         },
         {
-            "id": "Q8_rank",
+            "id": "Q6_rank",
             "description": "RANK window — top scorer per team",
             "category": "Window",
             "fn": lambda: df_players.groupby(
@@ -425,26 +337,6 @@ def run_pandas_benchmarks():
                 rnk=lambda x: x.groupby("playerteamName")["total_points"]
                     .rank(method="min", ascending=False).astype(int)
             ).query("rnk == 1").sort_values("total_points", ascending=False),
-        },
-        {
-            "id": "Q9_advanced_filter",
-            "description": "Advanced stats filter — high efficiency players",
-            "category": "Filter",
-            "fn": lambda: df_advanced[
-                (df_advanced["tsPct"] > 0.6) &
-                (df_advanced["usgPct"] > 0.25) &
-                (df_advanced["pie"] > 0.15)
-            ].sort_values("pie", ascending=False).head(100),
-        },
-        {
-            "id": "Q10_three_way_join",
-            "description": "Three-table join — players + advanced + schedule",
-            "category": "Join",
-            "fn": lambda: df_players[df_players["points"] >= 25].merge(
-                df_advanced, on=["personId", "gameId"], how="inner"
-            ).merge(
-                df_schedule, on="gameId", how="inner"
-            ).sort_values("points", ascending=False).head(200),
         },
     ]
 
@@ -507,9 +399,9 @@ def measure_storage_sizes():
 
     sizes = []
 
+    # Solo los CSV que todavía usas
     csv_files = [
         "/home/iceberg/jobs/PlayerStatistics.csv",
-        "/home/iceberg/jobs/PlayerStatisticsAdvanced.csv",
         "/home/iceberg/jobs/LeagueSchedule25_26.csv",
         "/home/iceberg/jobs/hoopshype_nba_salaries.csv",
     ]
@@ -522,9 +414,9 @@ def measure_storage_sizes():
             print(f"NOT FOUND: {f}")
 
     conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
+    # Ya no medimos dim_advanced_stats
     iceberg_tables = [
         ("iceberg.processed", "players_eoinamoore"),
-        ("iceberg.processed", "dim_advanced_stats"),
         ("iceberg.processed", "dim_schedule"),
     ]
     for schema, table in iceberg_tables:
@@ -539,6 +431,7 @@ def measure_storage_sizes():
             print(f"Iceberg {table}: ERROR — {e}")
 
     return sizes
+
 
 def save_results(all_results, storage_sizes):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

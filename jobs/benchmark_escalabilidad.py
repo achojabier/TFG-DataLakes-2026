@@ -6,13 +6,11 @@ import statistics
 from datetime import datetime
 from trino.dbapi import connect
 import pandas as pd
+from spark.spark_utils import get_spark_session
 
 TRINO_HOST     = os.environ.get("TRINO_HOST", "trino")
 TRINO_PORT     = int(os.environ.get("TRINO_PORT", 8080))
 TRINO_USER     = "admin"
-MINIO_USER     = os.environ.get("MINIO_USER", "admin")
-MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
-MINIO_ENDPOINT = "http://minio:9000"
 CSV_PATH = os.environ.get("CSV_PATH", "/home/iceberg/jobs/PlayerStatistics.csv")
 
 N_RUNS = 3
@@ -22,7 +20,7 @@ TIERS = [
         "name":       "Tier 1 — 30k",
         "table":      "iceberg.processed.players_eoinamoore",
         "csv_filter": ("2025-05-24", "2026-03-21"),
-        "rows":       None,# will be filled in later by querying Iceberg metadata
+        "rows":       None,
     },
     {
         "name":       "Tier 2 — 389k",
@@ -33,12 +31,10 @@ TIERS = [
     {
         "name":       "Tier 3 — 1.66M",
         "table":      "iceberg.processed.players_full",
-        "csv_filter": None,  # use full CSV
+        "csv_filter": None,
         "rows":       None,
     },
 ]
-
-
 
 QUERIES = [
     {
@@ -104,7 +100,7 @@ QUERIES = [
             ORDER BY fg_pct DESC
         """,
     },
-            {
+    {
         "id":          "Q_skip_team",
         "description": "Data skipping — filter on one team (non‑partition column)",
         "category":    "Scan (filtered)",
@@ -127,7 +123,6 @@ QUERIES = [
 ]
 
 
-
 def run_trino_tier(tier):
     conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
     results = []
@@ -138,6 +133,19 @@ def run_trino_tier(tier):
         row_count = 0
         error = None
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            cur = conn.cursor()
+            t0 = time.perf_counter()
+            cur.execute(sql)
+            rows = cur.fetchall()
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows)} rows (not counted)")
+        except Exception as e:
+            print(f"[{q['id']}] Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 cur = conn.cursor()
@@ -196,12 +204,24 @@ def run_spark_tier(spark, tier):
         row_count = 0
         error = None
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            t0 = time.perf_counter()
+            df_warmup = spark.sql(sql)
+            rows_warmup = df_warmup.collect()
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows_warmup)} rows (not counted)")
+        except Exception as e:
+            print(f"[{q['id']}] Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
                 df = spark.sql(sql)
                 rows = df.collect() 
-                row_count = len(rows)  # force full execution
+                row_count = len(rows)
                 bytes_scanned = None
                 elapsed = round((time.perf_counter() - t0) * 1000, 2)
                 times.append(elapsed)
@@ -236,6 +256,18 @@ def run_pandas_tier(tier, df):
 
     print(f"Pandas slice rows: {len(df):,}")
 
+    # Función auxiliar optimizada para Q4 (mantiene semántica SQL)
+    def _q4_pandas(df):
+        df_sorted = df.sort_values(["personId", "gameDateTimeEst"])
+        result_rows = []
+        for pid, group in df_sorted.groupby("personId", sort=False):
+            if len(result_rows) >= 1000:
+                break
+            group = group.copy()
+            group["rolling_avg"] = group["points"].rolling(5, min_periods=1).mean().round(2)
+            result_rows.append(group)
+        return pd.concat(result_rows).head(1000)[["firstName", "lastName", "points", "rolling_avg"]]
+
     pandas_queries = [
         {
             "id": "Q1_count",
@@ -255,10 +287,7 @@ def run_pandas_tier(tier, df):
         },
         {
             "id": "Q4_window",
-            "fn": lambda d: d.sort_values("gameDateTimeEst").assign(
-                rolling_avg=d.groupby("personId")["points"]
-                    .transform(lambda x: x.rolling(5, min_periods=1).mean().round(2))
-            ).head(1000),
+            "fn": _q4_pandas,
         },
         {
             "id": "Q5_multi_agg",
@@ -279,7 +308,7 @@ def run_pandas_tier(tier, df):
                 .sort_values("fg_pct", ascending=False)
             ),
         },
-                {
+        {
             "id": "Q_skip_team",
             "fn": lambda d: len(d[d["playerteamName"] == "Boston Celtics"]),
         },
@@ -294,6 +323,18 @@ def run_pandas_tier(tier, df):
         row_count = 0
         error = None
 
+        # ── Warmup (no incluido en la media) ──────────────────────────
+        try:
+            t0 = time.perf_counter()
+            result_warmup = q_pd["fn"](df)
+            t1 = time.perf_counter()
+            warmup_ms = round((t1 - t0) * 1000, 2)
+            rows_warmup = len(result_warmup) if hasattr(result_warmup, "__len__") else 1
+            print(f"[{q_sql['id']}] Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+        except Exception as e:
+            print(f"[{q_sql['id']}] Warmup: ERROR — {e}")
+
+        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -338,7 +379,6 @@ if __name__ == "__main__":
 
     print("\nWarming up Trino...")
     try:
-        
         conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
         for _ in range(3):
             cur = conn.cursor()
@@ -357,8 +397,6 @@ if __name__ == "__main__":
         print(f"Trino setup failed: {e}")
         print("Aborting benchmark – Trino is required.")
         sys.exit(1)
-
-
 
     # Load once
     if not os.path.isfile(CSV_PATH):
@@ -380,32 +418,7 @@ if __name__ == "__main__":
     print("SPARK SQL BENCHMARK")
     print("="*60)
     try:
-        from pyspark.sql import SparkSession
-        paquetes = (
-            "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
-            "org.apache.hadoop:hadoop-aws:3.3.4,"
-            "org.apache.iceberg:iceberg-aws-bundle:1.5.0"
-        )
-        spark = SparkSession.builder \
-            .appName("Escalabilidad_Spark") \
-            .config("spark.jars.packages", paquetes) \
-            .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-            .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
-            .config("spark.sql.catalog.iceberg.type", "rest") \
-            .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
-            .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
-            .config("spark.sql.catalog.iceberg.s3.endpoint", MINIO_ENDPOINT) \
-            .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
-            .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-            .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-            .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
-            .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
-            .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-            .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-            .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-                    "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-            .getOrCreate()
-        spark.sparkContext.setLogLevel("WARN")
+        spark = get_spark_session("Escalabilidad_Spark")
 
         print("\nWarming up Spark...")
         try:
@@ -444,7 +457,7 @@ if __name__ == "__main__":
             print(f"ERROR: {e}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"scalability_results_{timestamp}.csv"
+    results_file = f"/home/iceberg/jobs/scalability_results_{timestamp}.csv"
 
     fieldnames = ["engine", "tier", "rows", "query_id", "category",
                   "description", "avg_ms", "min_ms", "max_ms", "stddev_ms",

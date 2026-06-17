@@ -11,7 +11,6 @@ spark = get_spark_session("Ingesta_Salaries")
 print("Loading salary CSV...")
 df_raw = spark.read.csv(CSV_PATH, header=True, inferSchema=True)
 
-# ¡Novedad! Nos traemos todas las columnas de temporadas a la capa Landing
 df_salaries = df_raw.select(
     trim(col("player")).alias("fullname"),
     col("team").alias("playerteamName"),

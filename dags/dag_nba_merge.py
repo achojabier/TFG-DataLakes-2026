@@ -80,7 +80,6 @@ WHEN MATCHED THEN
                 + 0.15 * source.plusMinus) * 1.5
             )
         , 0.0), 100.0)
-WHEN NOT MATCHED THEN
     WHEN NOT MATCHED THEN
     INSERT (
         firstName, lastName, personId, gameId, playerteamName, opponentteamName, 

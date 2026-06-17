@@ -21,7 +21,7 @@ with DAG(
 ) as dag:
     tarea_productor = BashOperator(
         task_id='etl_box_scores',
-        bash_command='python /opt/airflow/jobs/productor_player.py',
+        bash_command='python /opt/airflow/jobs/productor_player.py --fecha {{ ds }}',
         execution_timeout=timedelta(minutes=30)
     )
 

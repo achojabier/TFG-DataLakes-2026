@@ -2,12 +2,12 @@ import os
 from pyspark.sql import SparkSession
 
 def get_spark_session(app_name="NBA_Lakehouse"):
-    # 1. Variables de entorno seguras
+    #Variables de entorno
     MINIO_USER     = os.environ.get("MINIO_USER", "admin")
     MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
     MINIO_ENDPOINT = "http://minio:9000"
 
-    # 2. Dependencias (Iceberg + Hadoop AWS + Delta)
+    #Paquetes necesarios para Spark (Delta Lake, Iceberg, AWS S3)
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
         "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
@@ -16,7 +16,7 @@ def get_spark_session(app_name="NBA_Lakehouse"):
         "io.delta:delta-spark_2.12:3.2.0"
     )
 
-    # 3. Construcción de la sesión
+    #Construcción de la sesión
     spark = SparkSession.builder \
         .appName(app_name) \
         .config("spark.jars.packages", paquetes) \
