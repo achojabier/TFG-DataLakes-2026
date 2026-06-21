@@ -39,6 +39,7 @@ services:
       /usr/bin/mc mb --ignore-existing minio/landing;
       /usr/bin/mc mb --ignore-existing minio/processed;
       /usr/bin/mc mb --ignore-existing minio/warehouse;
+      /usr/bin/mc mb --ignore-existing minio/lakehouse;
       echo 'Buckets creados. Listo.';
       exit 0;
       "
@@ -58,7 +59,7 @@ services:
       CATALOG_URI: jdbc:postgresql://postgres:5432/airflow
       CATALOG_JDBC_USER: airflow
       CATALOG_JDBC_PASSWORD: airflow
-      CATALOG_WAREHOUSE: s3://landing/
+      CATALOG_WAREHOUSE: s3://lakehouse/
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"

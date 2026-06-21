@@ -9,7 +9,7 @@ os.environ["AWS_ACCESS_KEY_ID"] = "admin"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "admin123"
 
 def iniciar_streaming():
-    print("⏳ Arrancando motor de Spark Streaming...")
+    print("Arrancando motor de Spark Streaming...")
     
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -45,10 +45,10 @@ def iniciar_streaming():
         StructField("SHOT_RESULT", StringType(), True)
     ])
 
-    print("🧊 Inicializando tabla Iceberg 'nba.tiros_vivo'...")
+    print("Inicializando tabla Iceberg 'nba.tiros_vivo'...")
     spark.createDataFrame([], esquema_tiro).writeTo("iceberg.nba.tiros_vivo").createOrReplace()
 
-    print("🎧 Escuchando canal 'nba_tiros_vivo' en Kafka...")
+    print("Escuchando canal 'nba_tiros_vivo' en Kafka...")
     df_kafka = spark.readStream \
         .format("kafka") \
         .option("kafka.bootstrap.servers", "kafka:9092") \
@@ -60,7 +60,7 @@ def iniciar_streaming():
         .select(from_json(col("json_payload"), esquema_tiro).alias("data")) \
         .select("data.*")
 
-    print("💾 Guardando micro-lotes en MinIO/Iceberg cada 5 segundos...")
+    print("Guardando micro-lotes en MinIO/Iceberg cada 5 segundos...")
     query = df_tiros.writeStream \
         .format("iceberg") \
         .outputMode("append") \

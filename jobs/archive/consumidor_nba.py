@@ -5,7 +5,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 
 def iniciar_consumidor_api():
-    print("⏳ Arrancando Consumidor Spark (Datos Nativos NBA API)...")
+    print("Arrancando Consumidor Spark (Datos Nativos NBA API)...")
     
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -50,7 +50,7 @@ def iniciar_consumidor_api():
         StructField("marcador_previo", StringType(), True)
     ])
 
-    print("🧊 Inicializando tabla Iceberg 'nba.tiros_api'...")
+    print("Inicializando tabla Iceberg 'nba.tiros_api'...")
     spark.createDataFrame([], esquema_tiros).writeTo("iceberg.nba.tiros_api").createOrReplace()
 
     df_kafka = spark.readStream \
@@ -64,7 +64,7 @@ def iniciar_consumidor_api():
         .select(from_json(col("json_payload"), esquema_tiros).alias("data")) \
         .select("data.*")
 
-    print("💾 Guardando coordenadas y tiros en Iceberg...")
+    print("Guardando coordenadas y tiros en Iceberg...")
     query = df_datos.writeStream \
         .format("iceberg") \
         .outputMode("append") \

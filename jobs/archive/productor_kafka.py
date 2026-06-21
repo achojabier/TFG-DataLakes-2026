@@ -12,12 +12,12 @@ def simulador_partido_vivo():
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
     
-    print("📁 Cargando datos para la simulación...")
+    print("Cargando datos para la simulación...")
     df = pd.read_csv('/home/iceberg/notebooks/shot_logs.csv')
     
     df = df.fillna(0)
 
-    print("🚀 ¡PITIDO INICIAL! Retransmitiendo tiros en vivo...\n")
+    print("¡PITIDO INICIAL! Retransmitiendo tiros en vivo...\n")
     
     for indice, fila in df.iterrows():
         tiro = fila.to_dict()

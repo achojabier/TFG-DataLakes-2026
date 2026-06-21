@@ -2,15 +2,33 @@ import os
 
 from pyspark.sql import SparkSession
 
-from spark_utils import get_spark_session
 
-spark = get_spark_session("Init_Processed_Tables")
+MINIO_USER = os.environ.get("MINIO_USER", "admin")
+MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
+
+spark = SparkSession.builder \
+    .appName("Init_Processed_Tables") \
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
+    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.iceberg.type", "rest") \
+    .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
+    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
+    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://minio:9000") \
+    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
+    .config("spark.sql.catalog.iceberg.s3.access-key-id", MINIO_USER) \
+    .config("spark.sql.catalog.iceberg.s3.secret-access-key", MINIO_PASSWORD) \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
+    .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
+    .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
+    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
+    .getOrCreate()
 
 print("Limpiando tablas antiguas para aplicar el nuevo esquema...")
 spark.sql("DROP TABLE IF EXISTS iceberg.processed.players_eoinamoore")
 spark.sql("DROP TABLE IF EXISTS iceberg.processed.dim_salaries")
 
-# --- players_eoinamoore ---
 spark.sql("""
     CREATE TABLE IF NOT EXISTS iceberg.processed.players_eoinamoore (
         firstName               STRING,
@@ -50,7 +68,6 @@ spark.sql("""
     PARTITIONED BY (months(gamedatetimeest))
 """)
 
-# --- dim_salaries ---
 spark.sql("""
     CREATE TABLE IF NOT EXISTS iceberg.processed.dim_salaries (
         personid        BIGINT,
@@ -70,5 +87,5 @@ spark.sql("""
 spark.sql("ALTER TABLE iceberg.processed.players_eoinamoore WRITE ORDERED BY playerteamName ASC, gameid DESC")
 spark.sql("ALTER TABLE iceberg.processed.dim_salaries WRITE ORDERED BY personid ASC, season DESC")
 
-print("Tablas processed creadas correctamente con identifier fields.")
+print("Tablas plata creadas correctamente.")
 spark.stop()

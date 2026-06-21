@@ -33,7 +33,7 @@ with DAG(
 
     disparar_plata = TriggerDagRunOperator(
         task_id='trigger_capa_plata',
-        trigger_dag_id='procesar_capa_plata_nba', # Llama a tu DAG de Plata
+        trigger_dag_id='procesar_capa_plata_nba',
         wait_for_completion=False
     )
 

@@ -8,7 +8,7 @@ os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("MINIO_USER", "admin")
 os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("MINIO_PASSWORD", "admin123")
 
 def iniciar_consumidor_full():
-    print("⏳ Arrancando Consumidor Spark para Basketball-Reference (Full)...")
+    print("Arrancando Consumidor Spark para Basketball-Reference (Full)...")
     
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -34,7 +34,6 @@ def iniciar_consumidor_full():
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # ESQUEMA PIXEL-PERFECT (Basado en el JSON exacto de la librería)
     esquema_completo = StructType([
         StructField("fecha_partido", StringType(), True),
         StructField("name", StringType(), True),
@@ -60,10 +59,9 @@ def iniciar_consumidor_full():
         StructField("game_score", DoubleType(), True)
     ])
 
-    print("🧊 Inicializando tabla Iceberg 'nba.basketball_reference'...")
+    print("Inicializando tabla Iceberg 'nba.basketball_reference'...")
     spark.createDataFrame([], esquema_completo).writeTo("iceberg.nba.basketball_reference").createOrReplace()
 
-    # LEER DE KAFKA
     df_kafka = spark.readStream \
         .format("kafka") \
         .option("kafka.bootstrap.servers", "kafka:9092") \
@@ -71,13 +69,11 @@ def iniciar_consumidor_full():
         .option("startingOffsets", "latest") \
         .load()
 
-    # PARSEAR JSON
     df_datos = df_kafka.selectExpr("CAST(value AS STRING) as json_payload") \
         .select(from_json(col("json_payload"), esquema_completo).alias("data")) \
         .select("data.*")
 
-    # ESCRIBIR EN ICEBERG - LANDING
-    print("💾 Guardando micro-lotes en la nueva tabla...")
+    print("Guardando micro-lotes en la nueva tabla...")
     query = df_datos.writeStream \
         .format("iceberg") \
         .outputMode("append") \

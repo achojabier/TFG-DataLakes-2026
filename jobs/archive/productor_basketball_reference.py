@@ -26,11 +26,11 @@ class NBABoxscoreProducer:
             cur.execute("SELECT MAX(fecha_partido) FROM boxscores_api")
             res = cur.fetchone()
             if res and res[0]:
-                print(f"✅ Última fecha en Iceberg: {res[0]}")
+                print(f"Última fecha en Iceberg: {res[0]}")
                 return datetime.strptime(res[0], "%Y-%m-%d")
         except Exception as e:
-            print(f"⚠️ No se pudo obtener la última fecha: {e}")
-        print(f"⚠️ Tabla vacía. Iniciando carga masiva desde {self.DEFAULT_START_DATE.date()}.")
+            print(f"No se pudo obtener la última fecha: {e}")
+        print(f"Tabla vacía. Iniciando carga masiva desde {self.DEFAULT_START_DATE.date()}.")
         return self.DEFAULT_START_DATE
 
     def _fetch_boxscores(self, date: datetime) -> list[dict]:
@@ -79,12 +79,12 @@ class NBABoxscoreProducer:
         print(f"   -> Procesando {date.date()}...")
         players = self._fetch_boxscores(date)
         if not players:
-            print(f"      ⚠️ Sin datos para {date.date()}, puede ser día sin partidos.")
+            print(f"Sin datos para {date.date()}, puede ser día sin partidos.")
             return
         for player in players:
             self.producer.send(self.TOPIC, self._build_record(player, date))
         self.producer.flush()
-        print(f"      ✅ {len(players)} registros enviados.")
+        print(f"{len(players)} registros enviados.")
         time.sleep(random.uniform(3.0, 5.0))
 
     def run(self):
@@ -92,16 +92,16 @@ class NBABoxscoreProducer:
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         if since >= today:
-            print("✅ Los datos ya están al día.")
+            print("Los datos ya están al día.")
             return
 
-        print(f"\n🚀 Iniciando ingesta desde {since.date()} hasta {(today - timedelta(days=1)).date()}...")
+        print(f"\nIniciando ingesta desde {since.date()} hasta {(today - timedelta(days=1)).date()}...")
         current = since
         while current < today:
             self._process_date(current)
             current += timedelta(days=1)
 
-        print("\n✅ ¡Ingesta completada con éxito!")
+        print("\n¡Ingesta completada con éxito!")
 
 
 if __name__ == "__main__":

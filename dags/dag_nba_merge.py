@@ -34,6 +34,7 @@ USING (
             foulsPersonal, turnovers, plusMinus, gameDateTimeEst,
             ROW_NUMBER() OVER(PARTITION BY gameId, personId ORDER BY gameDateTimeEst DESC) as rn
         FROM iceberg.landing.players_eoinamoore
+        WHERE CAST(gameDateTimeEst AS DATE) > (SELECT COALESCE(MAX(CAST(gameDateTimeEst AS DATE)), DATE '1900-01-01') FROM iceberg.processed.players_eoinamoore)
     ) WHERE rn = 1
 ) AS source
 ON target.gameId = source.gameId AND target.personId = source.personId
@@ -130,7 +131,7 @@ def verificar_datos_landing(**context):
     print(f"Filas encontradas en landing: {count}")
  
     if count == 0:
-        raise ValueError("La tabla landing está vacía — el MERGE no tiene sentido. ¿Falló la ingesta?")
+        raise ValueError("La tabla landing está vacía ¿Falló la ingesta?")
  
     print("Landing tiene datos. Procediendo con el MERGE.")
 
@@ -147,7 +148,6 @@ with DAG(
         python_callable=verificar_datos_landing,
         provide_context=True,
     )
-    # Operador que manda la orden a Trino
     ejecutar_merge_trino = TrinoOperator(
         task_id='merge_landing_to_processed',
         trino_conn_id='trino_default',
@@ -160,16 +160,10 @@ with DAG(
         execution_timeout=timedelta(minutes=15)
     )
 
-    limpiar_landing = TrinoOperator(
-        task_id='truncate_landing',
-        trino_conn_id='trino_default',
-        sql="DELETE FROM iceberg.landing.players_eoinamoore"
-    )
-
     disparar_oro = TriggerDagRunOperator(
     task_id='trigger_capa_oro',
-    trigger_dag_id='dag_nba_oro', # El nombre exacto de tu otro DAG
+    trigger_dag_id='dag_nba_oro',
     wait_for_completion=False
     )
 
-    verificar_landing >> [ejecutar_merge_trino, procesar_salarios] >> limpiar_landing >> disparar_oro
+    verificar_landing >> [ejecutar_merge_trino, procesar_salarios] >> disparar_oro

@@ -35,7 +35,7 @@ for col in ["salary_2026_27", "salary_2027_28", "salary_2028_29", "salary_2029_3
             fetch=False)
         print(f"Dropped existing column: {col}")
     except Exception:
-        pass  # Column didn't exist, that's fine
+        pass 
 
 print("\nOriginal dim_salaries schema")
 print("-"*40)
@@ -115,8 +115,6 @@ season_cols = {
     "salary_2029_30": "2029-30",
 }
 
-# Build a VALUES list for a single MERGE — one snapshot instead of 651
-# Deduplicate — keep first occurrence of each firstname+lastname combo
 seen = set()
 rows_vals = []
 for _, row in df.iterrows():
@@ -191,7 +189,7 @@ future = trino_execute(conn, """
 print(f"\nPlayers with future salary data: {future}/{count} ({round(future/count*100,1)}%)")
 
 
-print("\n📸 STEP 6 — Snapshot history")
+print("\n STEP 6 — Snapshot history")
 print("-"*40)
 snapshots = trino_query(conn, """
     SELECT snapshot_id, committed_at, operation
@@ -203,7 +201,7 @@ for s in snapshots:
     print(f"[{s.get('committed_at')}] {s.get('operation')}")
 
 
-print("\n⏱️  STEP 7 — Time travel: query table before schema evolution")
+print("\n⏱  STEP 7 — Time travel: query table before schema evolution")
 print("-"*40)
 
 first_snap = trino_execute(conn, """

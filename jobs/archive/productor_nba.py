@@ -21,11 +21,11 @@ def obtener_ultima_fecha():
         cur.execute("SELECT MAX(fecha_partido) FROM tiros_api")
         res = cur.fetchone()
         if res and res[0]:
-            print(f"✅ Última fecha en Iceberg: {res[0]}")
+            print(f"Última fecha en Iceberg: {res[0]}")
             return res[0]
     except:
         pass
-    print("⚠️ Tabla vacía. Iniciando carga masiva de la temporada 2025-26.")
+    print("Tabla vacía. Iniciando carga masiva de la temporada 2025-26.")
     return "20251001"
 
 def descargar_pbp_con_reintentos(game_id, intentos=3):
@@ -39,10 +39,10 @@ def descargar_pbp_con_reintentos(game_id, intentos=3):
             return pbp.get_dict()
         except (ReadTimeout, ConnectionError) as e:
             tiempo_espera = (i + 1) * 15 + random.randint(1, 5) # Espera 15s, luego 30s, luego 45s... + aleatorio
-            print(f"      ⚠️ Timeout con la NBA. Pausando {tiempo_espera} segundos antes de reintentar ({i+1}/{intentos})...")
+            print(f"Timeout con la NBA. Pausando {tiempo_espera} segundos antes de reintentar ({i+1}/{intentos})...")
             time.sleep(tiempo_espera)
         except Exception as e:
-            print(f"      ❌ Error desconocido en descarga: {e}")
+            print(f"Error desconocido en descarga: {e}")
             return None
     return None
 
@@ -55,7 +55,7 @@ def ingesta_nba_api_avanzada():
     ultima_fecha_str = obtener_ultima_fecha()
     equipos_nba = teams.get_teams()
     
-    print(f"\n🚀 [FASE 1] Extrayendo mapas espaciales de los 30 equipos...")
+    print(f"\n [FASE 1] Extrayendo mapas espaciales de los 30 equipos...")
     tiros_pendientes = []
 
     for i, equipo in enumerate(equipos_nba, 1):
@@ -81,15 +81,14 @@ def ingesta_nba_api_avanzada():
                     nuevos += 1
             print(f"   -> Encontrados {nuevos} tiros nuevos.")
         except Exception as e:
-            print(f"   -> ❌ Error con {equipo['full_name']}: {e}")
+            print(f"   -> Error con {equipo['full_name']}: {e}")
             
         time.sleep(1) 
 
     if not tiros_pendientes:
-        print("✅ No hay tiros nuevos que procesar.")
+        print("No hay tiros nuevos que procesar.")
         return
 
-    # Agrupar por partido
     tiros_por_partido = {}
     for tiro in tiros_pendientes:
         game_id = tiro['GAME_ID']
@@ -97,7 +96,7 @@ def ingesta_nba_api_avanzada():
             tiros_por_partido[game_id] = []
         tiros_por_partido[game_id].append(tiro)
 
-    print(f"\n🔥 [FASE 2] Descargando Play-by-Play (V3) y cruzando marcadores...")
+    print(f"\n [FASE 2] Descargando Play-by-Play (V3) y cruzando marcadores...")
 
     partidos_procesados = 0
     total_partidos = len(tiros_por_partido)
@@ -110,7 +109,7 @@ def ingesta_nba_api_avanzada():
         pbp_json = descargar_pbp_con_reintentos(game_id)
         
         if pbp_json is None:
-            print(f"      ❌ SALTANDO PARTIDO {game_id} tras fallar todos los reintentos.")
+            print(f"  SALTANDO PARTIDO {game_id} tras fallar todos los reintentos.")
             continue
             
         try:
@@ -162,7 +161,7 @@ def ingesta_nba_api_avanzada():
             productor.flush()
             
         except Exception as e:
-            print(f"      ❌ Error procesando datos del partido {game_id}: {e}")
+            print(f"Error procesando datos del partido {game_id}: {e}")
             
         time.sleep(random.uniform(1.0, 2.0)) 
 

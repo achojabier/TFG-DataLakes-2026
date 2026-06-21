@@ -110,7 +110,6 @@ QUERIES_TRINO = [
     },
 ]
 
-# Ya no necesitamos adaptación para Q6/Q10, pero mantenemos el bucle por si acaso
 QUERIES_SPARK = []
 for q in QUERIES_TRINO:
     QUERIES_SPARK.append(dict(q))
@@ -133,7 +132,6 @@ def run_trino_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             cur = conn.cursor()
             t0 = time.perf_counter()
@@ -141,11 +139,10 @@ def run_trino_benchmarks():
             rows = cur.fetchall()
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
-            print(f"Warmup: {warmup_ms} ms — {len(rows)} rows (not counted)")
+            print(f"Warmup: {warmup_ms} ms — {len(rows)} rows")
         except Exception as e:
             print(f"Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 cur = conn.cursor()
@@ -199,18 +196,16 @@ def run_spark_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             t0 = time.perf_counter()
             df_warmup = spark.sql(q["sql"])
             rows_warmup = df_warmup.collect()
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
-            print(f"Warmup: {warmup_ms} ms — {len(rows_warmup)} rows (not counted)")
+            print(f"Warmup: {warmup_ms} ms — {len(rows_warmup)} rows")
         except Exception as e:
             print(f"Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -347,18 +342,16 @@ def run_pandas_benchmarks():
 
         print(f"\n[{q['id']}] {q['description']}")
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             t0 = time.perf_counter()
             result_warmup = q["fn"]()
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
             rows_warmup = len(result_warmup) if hasattr(result_warmup, "__len__") else 1
-            print(f"Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+            print(f"Warmup: {warmup_ms} ms — {rows_warmup} rows")
         except Exception as e:
             print(f"Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -399,7 +392,6 @@ def measure_storage_sizes():
 
     sizes = []
 
-    # Solo los CSV que todavía usas
     csv_files = [
         "/home/iceberg/jobs/PlayerStatistics.csv",
         "/home/iceberg/jobs/LeagueSchedule25_26.csv",
@@ -414,7 +406,6 @@ def measure_storage_sizes():
             print(f"NOT FOUND: {f}")
 
     conn = connect(host=TRINO_HOST, port=TRINO_PORT, user=TRINO_USER)
-    # Ya no medimos dim_advanced_stats
     iceberg_tables = [
         ("iceberg.processed", "players_eoinamoore"),
         ("iceberg.processed", "dim_schedule"),

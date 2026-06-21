@@ -133,7 +133,6 @@ def run_trino_tier(tier):
         row_count = 0
         error = None
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             cur = conn.cursor()
             t0 = time.perf_counter()
@@ -141,11 +140,10 @@ def run_trino_tier(tier):
             rows = cur.fetchall()
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
-            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows)} rows (not counted)")
+            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows)} rows")
         except Exception as e:
             print(f"[{q['id']}] Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 cur = conn.cursor()
@@ -204,18 +202,16 @@ def run_spark_tier(spark, tier):
         row_count = 0
         error = None
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             t0 = time.perf_counter()
             df_warmup = spark.sql(sql)
             rows_warmup = df_warmup.collect()
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
-            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows_warmup)} rows (not counted)")
+            print(f"[{q['id']}] Warmup: {warmup_ms} ms — {len(rows_warmup)} rows")
         except Exception as e:
             print(f"[{q['id']}] Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -256,7 +252,6 @@ def run_pandas_tier(tier, df):
 
     print(f"Pandas slice rows: {len(df):,}")
 
-    # Función auxiliar optimizada para Q4 (mantiene semántica SQL)
     def _q4_pandas(df):
         df_sorted = df.sort_values(["personId", "gameDateTimeEst"])
         result_rows = []
@@ -323,18 +318,16 @@ def run_pandas_tier(tier, df):
         row_count = 0
         error = None
 
-        # ── Warmup (no incluido en la media) ──────────────────────────
         try:
             t0 = time.perf_counter()
             result_warmup = q_pd["fn"](df)
             t1 = time.perf_counter()
             warmup_ms = round((t1 - t0) * 1000, 2)
             rows_warmup = len(result_warmup) if hasattr(result_warmup, "__len__") else 1
-            print(f"[{q_sql['id']}] Warmup: {warmup_ms} ms — {rows_warmup} rows (not counted)")
+            print(f"[{q_sql['id']}] Warmup: {warmup_ms} ms — {rows_warmup} rows")
         except Exception as e:
             print(f"[{q_sql['id']}] Warmup: ERROR — {e}")
 
-        # ── Mediciones reales ─────────────────────────────────────────
         for run in range(N_RUNS):
             try:
                 t0 = time.perf_counter()
@@ -398,7 +391,6 @@ if __name__ == "__main__":
         print("Aborting benchmark – Trino is required.")
         sys.exit(1)
 
-    # Load once
     if not os.path.isfile(CSV_PATH):
         raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
     df_full = pd.read_csv(CSV_PATH, low_memory=False)

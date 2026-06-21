@@ -2,7 +2,7 @@ import os
 from pyspark.sql import SparkSession
 
 def cargar_csvs_a_iceberg():
-    print("🚀 Arrancando Spark en modo Batch para cargar CSVs...")
+    print("Arrancando Spark en modo Batch para cargar CSVs...")
     
     paquetes = (
         "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
@@ -31,29 +31,26 @@ def cargar_csvs_a_iceberg():
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # 1. Cargar el Calendario (Spark infiere las 17 columnas automáticamente)
-    print("📅 Leyendo CSV del Calendario...")
+    print("Leyendo CSV del Calendario...")
     df_calendario = spark.read \
         .option("header", "true") \
         .option("inferSchema", "true") \
-        .csv("/home/iceberg/jobs/LeagueSchedule25_26.csv") # Asegúrate de que el nombre coincida
+        .csv("/home/iceberg/jobs/LeagueSchedule25_26.csv")
 
-    print("🧊 Creando tabla dim_calendar en Iceberg...")
-    # El comando .create() le dice a Iceberg que genere la tabla desde cero con el esquema del DataFrame
+    print("Creando tabla dim_calendar en Iceberg...")
     df_calendario.writeTo("iceberg.processed.dim_schedule").create()
 
 
-    # 2. Cargar las Estadísticas Avanzadas (Spark infiere las 60 columnas automáticamente)
-    print("📊 Leyendo CSV de Estadísticas Avanzadas...")
+    print("Leyendo CSV de Estadísticas Avanzadas...")
     df_stats = spark.read \
         .option("header", "true") \
         .option("inferSchema", "true") \
-        .csv("/home/iceberg/jobs/PlayerStatisticsAdvanced.csv") # Asegúrate de que el nombre coincida
+        .csv("/home/iceberg/jobs/PlayerStatisticsAdvanced.csv") 
 
-    print("🧊 Creando tabla dim_advanced_stats en Iceberg...")
+    print("Creando tabla dim_advanced_stats en Iceberg...")
     df_stats.writeTo("iceberg.processed.dim_advanced_stats").create()
 
-    print("✅ ¡Proceso terminado con éxito!")
+    print("¡Proceso terminado con éxito!")
 
 if __name__ == "__main__":
     cargar_csvs_a_iceberg()

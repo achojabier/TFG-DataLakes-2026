@@ -1,8 +1,27 @@
 import os
 from pyspark.sql import SparkSession
-from spark_utils import get_spark_session
 
-spark = get_spark_session("Init_Gold_Tables")
+MINIO_USER = os.environ.get("MINIO_USER", "admin")
+MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
+
+spark = SparkSession.builder \
+    .appName("Init_Processed_Tables") \
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
+    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.iceberg.type", "rest") \
+    .config("spark.sql.catalog.iceberg.uri", "http://iceberg-rest:8181") \
+    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
+    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://minio:9000") \
+    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true") \
+    .config("spark.sql.catalog.iceberg.s3.access-key-id", MINIO_USER) \
+    .config("spark.sql.catalog.iceberg.s3.secret-access-key", MINIO_PASSWORD) \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
+    .config("spark.hadoop.fs.s3a.access.key", MINIO_USER) \
+    .config("spark.hadoop.fs.s3a.secret.key", MINIO_PASSWORD) \
+    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
+    .getOrCreate()
 
 print("Limpiando esquemas antiguos de Oro...")
 spark.sql("DROP TABLE IF EXISTS iceberg.warehouse.game_logs")
@@ -80,5 +99,5 @@ spark.sql("""
 spark.sql("ALTER TABLE iceberg.warehouse.game_logs WRITE ORDERED BY playerteamname ASC, game_date DESC, personid ASC")
 spark.sql("ALTER TABLE iceberg.warehouse.player_season_stats WRITE ORDERED BY season_start_year DESC, playerteamname ASC, total_points DESC")
 
-print("Tablas gold creadas correctamente con identifier fields y esquemas alineados.")
+print("Tablas gold creadas correctamente.")
 spark.stop()

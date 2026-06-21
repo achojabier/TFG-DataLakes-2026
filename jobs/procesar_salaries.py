@@ -11,7 +11,6 @@ FUZZY_THRESHOLD = 0.80
 
 spark = get_spark_session("Procesar_Salaries")
 print("Leyendo salarios crudos desde landing y transformando años a filas...")
-# Usamos stack para coger las columnas de los años y convertirlas en filas (season, salary_usd)
 df_salaries_unpivoted = spark.sql("""
     SELECT 
         fullname,
@@ -113,7 +112,6 @@ df_final = df_final.dropDuplicates(["personid", "season"])
 
 df_final.createOrReplaceTempView("salarios_nuevos")
 
-# Cruzamos por ID y Temporada
 spark.sql("""
     MERGE INTO iceberg.processed.dim_salaries t
     USING salarios_nuevos s

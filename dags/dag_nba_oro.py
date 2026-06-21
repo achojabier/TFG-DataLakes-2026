@@ -139,7 +139,7 @@ GROUP BY
 with DAG(
     'dag_nba_oro',
     default_args=default_args,
-    description='Data Marts de la Capa Oro (Idempotente + Full Refresh respetando esquema)',
+    description='Data Marts de la Capa Oro',
     schedule_interval=None, 
     catchup=False,
     tags=['nba', 'iceberg', 'gold'],

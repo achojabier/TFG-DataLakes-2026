@@ -7,7 +7,7 @@ def get_spark_session(app_name="NBA_Lakehouse"):
     MINIO_PASSWORD = os.environ.get("MINIO_PASSWORD", "admin123")
     MINIO_ENDPOINT = "http://minio:9000"
 
-    #Paquetes necesarios para Spark (Delta Lake, Iceberg, AWS S3)
+    #Paquetes necesarios para Spark
     paquetes = (
         "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
         "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"

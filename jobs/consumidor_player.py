@@ -46,8 +46,8 @@ def iniciar_consumidor_player():
     CREATE TABLE IF NOT EXISTS iceberg.landing.players_eoinamoore (
         firstName STRING,
         lastName STRING,
-        personId STRING NOT NULL,
-        gameId STRING NOT NULL,
+        personId STRING,
+        gameId STRING,
         playerteamName STRING,
         opponentteamName STRING,
         gameType STRING,
@@ -70,7 +70,7 @@ def iniciar_consumidor_player():
         foulsPersonal INT,
         turnovers INT,
         plusMinus INT,
-        gameDateTimeEst TIMESTAMP NOT NULL
+        gameDateTimeEst TIMESTAMP
     ) USING iceberg
     """)
 
@@ -89,13 +89,13 @@ def iniciar_consumidor_player():
         .dropna(subset=["personId", "gameId", "gameDateTimeEst"])
     
     
-    print("💾 Guardando micro-lotes en MinIO/Iceberg cada 5 segundos...")
+    print("Guardando micro-lotes en MinIO/Iceberg cada 5 segundos...")
     query = df_tiros.writeStream \
         .format("iceberg") \
         .outputMode("append") \
         .trigger(processingTime="5 seconds") \
         .option("path", "iceberg.landing.players_eoinamoore") \
-        .option("checkpointLocation", "s3a://landing/checkpoints/players_eoinamoore") \
+        .option("checkpointLocation", "s3a://lakehouse/checkpoints/players_eoinamoore") \
         .start()
     
     query_cold_storage = df_kafka.selectExpr("CAST(value AS STRING) as raw_json") \
@@ -104,7 +104,7 @@ def iniciar_consumidor_player():
         .outputMode("append") \
         .trigger(processingTime="5 seconds") \
         .option("path", "s3a://raw-archive/players_eoinamoore/") \
-        .option("checkpointLocation", "s3a://landing/checkpoints/players_archive_raw") \
+        .option("checkpointLocation", "s3a://lakehouse/checkpoints/players_archive_raw") \
         .start()
 
     spark.streams.awaitAnyTermination()

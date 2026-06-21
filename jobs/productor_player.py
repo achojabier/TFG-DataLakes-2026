@@ -4,7 +4,6 @@ import time
 import os
 from kafka import KafkaProducer
 
-# Ruta al archivo de control de estado
 ARCHIVO_ESTADO = '/opt/airflow/jobs/watermark.json'
 FECHA_DEFAULT = '2026-05-01'
 
@@ -41,7 +40,6 @@ def simulador_partido_vivo():
     df = pd.read_csv('/opt/airflow/jobs/PlayerStatistics.csv')
     df['fecha_real'] = pd.to_datetime(df['gameDateTimeEst'], utc=True)
     
-    # IDEMPOTENCIA BASADA EN ESTADO: Filtramos lo mayor a la última fecha
     df_filtrado = df[df['fecha_real'].dt.strftime('%Y-%m-%d') > ultima_fecha_procesada].copy()
 
     if df_filtrado.empty:
@@ -53,7 +51,6 @@ def simulador_partido_vivo():
 
     print(f"Se han encontrado {len(df_filtrado)} eventos nuevos. Iniciando transmisión...\n")
 
-    # Guardamos cuál es la fecha máxima de este nuevo bloque para apuntarla al final
     nueva_fecha_maxima = df_filtrado['fecha_real'].max().strftime('%Y-%m-%d')
 
     for indice, fila in df_filtrado.iterrows():
@@ -81,12 +78,10 @@ def simulador_partido_vivo():
         productor.send('nba_players_eoinamoore', box_score)
         print(f"Enviando partido del {box_score['gameDateTimeEst']} -> {box_score['firstName']} {box_score['lastName']}")
         
-        # Un pequeño delay para no ahogar a Kafka si hay miles de registros de golpe
         time.sleep(0.01) 
 
     productor.flush()
     
-    # Solo cuando todo se ha enviado con éxito a Kafka, actualizamos la "libreta"
     guardar_nuevo_estado(nueva_fecha_maxima)
     print("Ingesta finalizada con éxito.")
 

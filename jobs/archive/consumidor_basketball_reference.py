@@ -90,7 +90,7 @@ class NBATirosConsumer:
         ).select("data.*")
 
     def run(self):
-        print(f"🚀 [CONSUMER] Esperando datos en {self.TOPIC}...")
+        print(f"[CONSUMER] Esperando datos en {self.TOPIC}...")
         self._ensure_table()
 
         query = self._parse(self._read_stream()) \
@@ -105,7 +105,7 @@ class NBATirosConsumer:
         try:
             query.awaitTermination()
         except KeyboardInterrupt:
-            print("🛑 [CONSUMER] Deteniendo stream...")
+            print("[CONSUMER] Deteniendo stream...")
             query.stop()
 
 

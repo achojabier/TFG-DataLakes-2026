@@ -6,20 +6,15 @@ from pyspark.sql.functions import col, to_timestamp
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, DoubleType
 )
-# PONER ESTO (arriba, junto a tus otros imports como 'import csv'):
 from spark.spark_utils import get_spark_session
 
-# Y donde arrancabas Spark, pones simplemente:
 spark = get_spark_session("Ingesta_Escalabilidad")
 CSV_PATH       = "/home/iceberg/jobs/PlayerStatistics.csv"
 
-# ─── Load full CSV ─────────────────────────────────────────────────────────────
 
-print("📁 Loading full PlayerStatistics.csv...")
+print("Loading full PlayerStatistics.csv...")
 df_raw = spark.read.csv(CSV_PATH, header=True, inferSchema=False)
 
-# Cast columns explicitly — historical data has mixed types so we cast
-# everything and let nulls fall where they may (documented in thesis)
 df = df_raw.select(
     col("firstName").cast(StringType()),
     col("lastName").cast(StringType()),
@@ -53,9 +48,7 @@ df = df_raw.select(
 total = df.count()
 print(f"Total rows loaded: {total:,}")
 
-# ─── Document null rates ─────────────────────────────────────────────────────
-# 'rebounds_total' es un campo calculado a partir de reboundsDefensive + reboundsOffensive.
-# No existe con ese nombre en el esquema original de Iceberg, se usa solo para el análisis.
+
 print("\nNull rate per column (data quality report):")
 null_report = []
 columns_to_check = [
@@ -83,7 +76,6 @@ for col_alias, col_desc in columns_to_check:
         "null_percentage": pct
     })
 
-# Exportar el informe de nulos a CSV
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 null_report_file = f"/home/iceberg/jobs/null_rates_{timestamp}.csv"
 with open(null_report_file, "w", newline="", encoding="utf-8") as f:
@@ -92,7 +84,6 @@ with open(null_report_file, "w", newline="", encoding="utf-8") as f:
     writer.writerows(null_report)
 print(f"\nNull rate report saved to: {null_report_file}")
 
-# ─── Tier 2: ~500k rows (2015-16 season onwards) ──────────────────────────────
 
 print("\nCreating players_500k (2015-16 season onwards)...")
 df_500k = df.filter(
@@ -110,10 +101,8 @@ df_500k.writeTo("iceberg.processed.players_500k") \
 
 print(f"players_500k created: {count_500k:,} rows")
 
-# ─── Tier 3: Full dataset (1947-present) ──────────────────────────────────────
 
 print("\nCreating players_full (full 1947-present dataset)...")
-# Cambio de months a years para evitar miles de archivos minúsculos
 df.writeTo("iceberg.processed.players_full") \
     .using("iceberg") \
     .tableProperty("write.format.default", "parquet") \
@@ -123,7 +112,6 @@ df.writeTo("iceberg.processed.players_full") \
 
 print(f"players_full created: {total:,} rows")
 
-# ─── Summary ──────────────────────────────────────────────────────────────────
 
 print("\n" + "="*50)
 print("SCALABILITY TIERS SUMMARY")
